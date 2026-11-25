@@ -89,14 +89,14 @@ CANONICO="$DIR_PROYECTO/jats/c-libro-$NOMBRE_BASE.xml"
 MANIFIESTO="$DIR_PROYECTO/tmp/manifiesto-libro-$NOMBRE_BASE.xml"
 DIR_SALIDA="$DIR_PROYECTO/salidas/crossref"
 SALIDA="$DIR_SALIDA/crossref-l-$NOMBRE_BASE.xml"
-XSL="$DIR_GBP_LOCAL/xslt/libro-a-crossref.xsl"
+XSL="$DIR_RECURSOS/xslt/libro-a-crossref.xsl"
 
 # --- 4. ENTORNO ---
 paso "verificando el entorno"
 [[ -d "$DIR_PROYECTO" ]] || morir "No existe el proyecto: $DIR_PROYECTO"
 requerir_comandos java xmllint
 [[ -f "$RUTA_SAXON" ]] || morir "Saxon-HE no está en $RUTA_SAXON"
-[[ -f "$XSL" ]]        || morir "Falta la hoja $XSL: actualizá la copia local (~/.gbpublisher/xslt)"
+[[ -f "$XSL" ]]        || morir "Falta la hoja $XSL: reinstalá gbpublisher"
 # EL ESQUEMA SE COMPRUEBA ANTES DE TRABAJAR: SIN ÉL NO HAY VALIDACIÓN
 esquema_crossref_presente || morir "No está el esquema de Crossref del sistema: $XSD_CROSSREF (o su catálogo, $CATALOGO_CROSSREF, o standard-modules/)"
 ok "herramientas, hoja y esquema de Crossref 5.4.0"

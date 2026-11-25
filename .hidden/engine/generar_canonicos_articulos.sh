@@ -82,8 +82,8 @@ fi
 TIEMPO_PANDOC=120
 TIEMPO_SAXON=120
 
-XSL="$DIR_GBP_LOCAL/xslt/ensamblar-articulo-canonico.xsl"
-DIR_FILTROS="$DIR_GBP_LOCAL/filters"
+XSL="$DIR_RECURSOS/xslt/ensamblar-articulo-canonico.xsl"
+DIR_FILTROS="$DIR_RECURSOS/filters"
 
 # EL VOLCADO DEL NÚMERO: LA MISMA RUTA QUE m_CanonicoRevista.ARCHIVO_DATOS, Y
 # LA VERSIÓN QUE LEE LA HOJA (m_CanonicoRevista.VERSION_DATOS). SI CAMBIAN

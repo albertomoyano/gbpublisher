@@ -66,14 +66,17 @@ RUTA_VNU="${GBP_VNU:-/opt/vnu/vnu.jar}"
 # SIN FORMACIÓN TÉCNICA PUEDE HACER CON ESE AVISO, ASÍ QUE TODOS LO DICEN
 COMO_REPARAR="Abrí cualquier proyecto y usá «Acerca de... → Controlar integridad del sistema»: instala lo que falte."
 
-# COPIA LOCAL DE TRABAJO: ES LA QUE LA APLICACIÓN LEE (SC-11)
-DIR_GBP_LOCAL="$HOME/.gbpublisher"
+# LOS RECURSOS DEL PAQUETE: LA CARPETA DE engine/, UN NIVEL ARRIBA.
+# INSTALADO ES /usr/share/gbpublisher; DESDE EL IDE, .hidden/ DEL REPOSITORIO.
+# DESDE EL 25/11/2026 NO HAY COPIA LOCAL EN ~/.gbpublisher (SC-11): xslt,
+# latex, filters, assets, fonts, dtd, chart Y LO DEMÁS SE LEEN DE ACÁ
+DIR_RECURSOS="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")"
 
 # LA LISTA DE ABREVIATURAS DEL LECTOR (SC-68): pandoc PONE UN ESPACIO DURO
 # DETRÁS DE CADA UNA (pág. 22, cap. 3, n.º 5). REEMPLAZA LA LISTA QUE TRAE
 # PANDOC, QUE ES INGLESA (GV-133). VA CON --abbreviations EN TODO LECTOR
 # QUE PRODUCE UNA SALIDA; LA MISMA RUTA USA GAMBAS (m_Constantes)
-RUTA_ABREVIATURAS="$DIR_GBP_LOCAL/filters/abreviaturas-espacio-fijo.txt"
+RUTA_ABREVIATURAS="$DIR_RECURSOS/filters/abreviaturas-espacio-fijo.txt"
 
 # LAS SIGLAS DEL LIBRO, RELATIVAS AL PROYECTO (1.18.0). LAS ESCRIBE GAMBAS
 # (m_Siglas.EscribirParaFiltro) ANTES DE LANZAR LOS SCRIPTS QUE LAS USAN; LAS
@@ -213,6 +216,26 @@ titulo() { printf '%s%s%s\n' "$C_TITULO" "$1" "$C_RESET"; }
 paso()   { printf '\n%s→ %s%s\n' "$C_TITULO" "$1" "$C_RESET"; }
 ok()     { printf '  %s✓%s %s\n' "$C_OK" "$C_RESET" "$1"; }
 tenue()  { printf '  %s%s%s\n' "$C_TENUE" "$1" "$C_RESET"; }
+
+# ============================================================================
+# Función   : avisar_estetica_editorial
+# Propósito : Declara en la terminal que la composición usa la estética de la
+#             editorial y no la del paquete (SC-11, contrapartida). La capa
+#             llega al proyecto con una primera línea que la marca
+#             (m_InicioCierre.MARCA_EDITORIAL, CopiarRecursosLatex): UN CAMBIO
+#             VA EN LOS DOS LUGARES.
+# Parámetros: $1 ruta de la capa de estética en latex/ del proyecto
+# Retorna   : 0 siempre; con la estética del paquete no escribe nada
+# ============================================================================
+avisar_estetica_editorial() {
+    local primera
+    [[ -f "$1" ]] || return 0
+    IFS= read -r primera < "$1" || true
+    if [[ "$primera" == "% gbpublisher: estética de la editorial: "* ]]; then
+        tenue "estética de la editorial: ${primera#% gbpublisher: estética de la editorial: }"
+    fi
+    return 0
+}
 
 # A DIFERENCIA DE LA COPIA DEL PDF, ESTE aviso CUENTA: UN AVISO EMITIDO TIENE
 # QUE LLEGAR A GAMBAS COMO CÓDIGO 3, NO QUEDAR SOLO EN LA TERMINAL

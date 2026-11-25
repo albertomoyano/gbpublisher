@@ -82,14 +82,14 @@ VOLCADO="$DIR_PROYECTO/$VOLCADO_REL"
 DIR_SALIDA="$DIR_PROYECTO/salidas/doaj"
 # LOS CANÓNICOS SIN DOCTYPE: SAXON NO BAJA LA DTD REMOTA (GV-25)
 DIR_CANONICOS="$DIR_PROYECTO/tmp/doaj-canonicos"
-XSL="$DIR_GBP_LOCAL/xslt/numero-a-doaj.xsl"
+XSL="$DIR_RECURSOS/xslt/numero-a-doaj.xsl"
 
 # --- 4. ENTORNO ---
 paso "verificando el entorno"
 [[ -d "$DIR_PROYECTO" ]] || morir "No existe el proyecto: $DIR_PROYECTO"
 requerir_comandos java xmllint
 [[ -f "$RUTA_SAXON" ]] || morir "Saxon-HE no está en $RUTA_SAXON"
-[[ -f "$XSL" ]]        || morir "Falta la hoja $XSL: actualizá la copia local (~/.gbpublisher/xslt)"
+[[ -f "$XSL" ]]        || morir "Falta la hoja $XSL: reinstalá gbpublisher"
 # EL ESQUEMA SE COMPRUEBA ANTES DE TRABAJAR: SIN ÉL NO HAY VALIDACIÓN
 esquema_doaj_presente || morir "No está el esquema de DOAJ del sistema: $XSD_DOAJ (o su catálogo, $CATALOGO_DOAJ)"
 ok "herramientas, hoja y esquema de DOAJ"

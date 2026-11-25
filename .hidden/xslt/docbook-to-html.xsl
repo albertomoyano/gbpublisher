@@ -207,10 +207,28 @@ RC APLICADAS:
        | $info/biblioid[@class='isbn'][@role='electronic'])[1])"/>
   </xsl:variable>
 
+  <!-- LAS EDITORIALES DEL LIBRO, EN ORDEN: LA PRIMERA ES LA PRINCIPAL. EN
+       UNA COEDICIÓN EL CANÓNICO LLEVA UN publisher POR EDITORIAL
+       (libro_editorial, claude/crossref-libros.md, F1) -->
+  <xsl:variable name="editoriales" as="xs:string*"
+      select="for $p in ($info/db:publisher | $info/publisher)
+              return normalize-space(($p/db:publishername | $p/publishername)[1])[. != '']"/>
+
+  <!-- LOS NOMBRES UNIDOS, COMO {editorial} EN EL PDF: «A», «A y B»,
+       «A, B y C», CON LA MISMA REGLA DE «y»/«e» (separador-autoria). ES LO
+       QUE SE LEE (CABECERA, CÓMO CITAR, citation_publisher); DC.publisher
+       Y Schema.org LLEVAN UNA ENTRADA POR EDITORIAL -->
   <xsl:variable name="editorial" as="xs:string">
-    <xsl:value-of select="normalize-space(
-      ($info/db:publisher/db:publishername
-       | $info/publisher/publishername)[1])"/>
+    <xsl:value-of>
+      <xsl:for-each select="$editoriales">
+        <xsl:call-template name="separador-autoria">
+          <xsl:with-param name="pos" select="position()"/>
+          <xsl:with-param name="total" select="last()"/>
+          <xsl:with-param name="nombre" select="."/>
+        </xsl:call-template>
+        <xsl:value-of select="."/>
+      </xsl:for-each>
+    </xsl:value-of>
   </xsl:variable>
 
   <xsl:variable name="ciudad_pub" as="xs:string">
@@ -500,9 +518,10 @@ RC APLICADAS:
     <meta name="DC.type" content="Book"/>
     <meta name="DC.format" content="text/html"/>
 
-    <xsl:if test="$editorial != ''">
-      <meta name="DC.publisher" content="{$editorial}"/>
-    </xsl:if>
+    <!-- DC.publisher ES REPETIBLE: UNO POR EDITORIAL -->
+    <xsl:for-each select="$editoriales">
+      <meta name="DC.publisher" content="{.}"/>
+    </xsl:for-each>
 
     <xsl:if test="$doi_libro != ''">
       <meta name="DC.identifier" content="https://doi.org/{$doi_libro}"/>
@@ -3653,9 +3672,10 @@ RC APLICADAS:
     <!-- OBRA CONTENEDORA -->
     <meta name="DC.relation.ispartof" content="{$titulo_libro}"/>
 
-    <xsl:if test="$editorial != ''">
-      <meta name="DC.publisher" content="{$editorial}"/>
-    </xsl:if>
+    <!-- DC.publisher ES REPETIBLE: UNO POR EDITORIAL -->
+    <xsl:for-each select="$editoriales">
+      <meta name="DC.publisher" content="{.}"/>
+    </xsl:for-each>
     <xsl:if test="$capDoi != ''">
       <meta name="DC.identifier" content="https://doi.org/{$capDoi}"/>
     </xsl:if>
@@ -3790,10 +3810,17 @@ RC APLICADAS:
         <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$isbn_print"/></xsl:call-template>
         <xsl:text>"</xsl:text>
       </xsl:if>
-      <xsl:if test="$editorial != ''">
-        <xsl:text>,"publisher":{"@type":"Organization","name":"</xsl:text>
-        <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$editorial"/></xsl:call-template>
-        <xsl:text>"}</xsl:text>
+      <!-- UNA ORGANIZACIÓN POR EDITORIAL; CON MÁS DE UNA, UNA LISTA -->
+      <xsl:if test="exists($editoriales)">
+        <xsl:text>,"publisher":</xsl:text>
+        <xsl:if test="count($editoriales) gt 1"><xsl:text>[</xsl:text></xsl:if>
+        <xsl:for-each select="$editoriales">
+          <xsl:if test="position() gt 1"><xsl:text>,</xsl:text></xsl:if>
+          <xsl:text>{"@type":"Organization","name":"</xsl:text>
+          <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="."/></xsl:call-template>
+          <xsl:text>"}</xsl:text>
+        </xsl:for-each>
+        <xsl:if test="count($editoriales) gt 1"><xsl:text>]</xsl:text></xsl:if>
       </xsl:if>
       <xsl:if test="$anio_cita != ''">
         <xsl:text>,"datePublished":"</xsl:text>

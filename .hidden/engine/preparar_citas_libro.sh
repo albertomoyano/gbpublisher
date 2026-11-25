@@ -71,8 +71,8 @@ TIEMPO_SAXON=300
 # CUATRO PASADAS DE LuaLaTeX Y UNA DE biber SOBRE UN DOCUMENTO CHICO: EN EL
 # LIBRO DE DUEK (132 CITAS, 113 REFERENCIAS) TARDÓ 13 SEGUNDOS
 TIEMPO_MAKE4HT=900
-XSL="$DIR_GBP_LOCAL/xslt/docbook-to-latex-citas.xsl"
-CFG="$DIR_GBP_LOCAL/latex/cita-tex4ht.cfg"
+XSL="$DIR_RECURSOS/xslt/docbook-to-latex-citas.xsl"
+CFG="$DIR_RECURSOS/latex/cita-tex4ht.cfg"
 
 # ============================================================================
 # Función   : fallo

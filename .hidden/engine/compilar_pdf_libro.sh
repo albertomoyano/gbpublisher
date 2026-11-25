@@ -136,6 +136,8 @@ verificar_herramientas_latex
 verificar_bib
 # LA PAGINACIÓN: perl LA LEE DE LOS .aux Y pdfinfo CUENTA LAS PÁGINAS
 requerir_comandos perl pdfinfo
+# LA ESTÉTICA DE LA EDITORIAL, SI LA HAY, SE DECLARA (SC-11)
+avisar_estetica_editorial "$DIR_AUX/preambulo-estetica.tex"
 [[ -f "$DIR_ENGINE/paginacion_libro.pl" ]] || morir "Falta $DIR_ENGINE/paginacion_libro.pl: reinstalá gbpublisher"
 
 printf '\n  %-14s %s\n' "Proyecto:" "$DIR_PROYECTO"

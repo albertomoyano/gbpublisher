@@ -116,10 +116,10 @@ OPF="$DIR_OEBPS/content.opf"
 # LOS CANÓNICOS SIN DOCTYPE: SAXON NO BAJA LA DTD REMOTA (GV-25)
 DIR_CANONICOS="$DIR_PROYECTO/tmp/epub-canonicos"
 DIR_SALIDA="$DIR_PROYECTO/salidas/epub"
-XSL_NUMERO="$DIR_GBP_LOCAL/xslt/numero-a-epub.xsl"
-XSL_ARTICULO="$DIR_GBP_LOCAL/xslt/jats-a-epub-articulo.xsl"
-DIR_FUENTES="$DIR_GBP_LOCAL/fonts"
-CSS="$DIR_GBP_LOCAL/assets/css/$CSS_EPUB"
+XSL_NUMERO="$DIR_RECURSOS/xslt/numero-a-epub.xsl"
+XSL_ARTICULO="$DIR_RECURSOS/xslt/jats-a-epub-articulo.xsl"
+DIR_FUENTES="$DIR_RECURSOS/fonts"
+CSS="$DIR_RECURSOS/assets/css/$CSS_EPUB"
 
 # --- 4. ENTORNO ---
 paso "verificando el entorno"
@@ -129,8 +129,8 @@ paso "verificando el entorno"
 
 requerir_comandos java xmllint zip identify convert sha256sum iconv
 [[ -f "$RUTA_SAXON" ]]   || morir "Saxon-HE no está en $RUTA_SAXON"
-[[ -f "$XSL_NUMERO" ]]   || morir "Falta la hoja $XSL_NUMERO: actualizá la copia local (~/.gbpublisher/xslt)"
-[[ -f "$XSL_ARTICULO" ]] || morir "Falta la hoja $XSL_ARTICULO: actualizá la copia local (~/.gbpublisher/xslt)"
+[[ -f "$XSL_NUMERO" ]]   || morir "Falta la hoja $XSL_NUMERO: reinstalá gbpublisher"
+[[ -f "$XSL_ARTICULO" ]] || morir "Falta la hoja $XSL_ARTICULO: reinstalá gbpublisher"
 [[ -f "$CSS" ]]          || morir "No se encontró la hoja de estilos del EPUB: $CSS"
 
 faltan=()

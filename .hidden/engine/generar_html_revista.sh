@@ -97,10 +97,10 @@ INDEX="$DIR_DOCS/index.html"
 # LOS CANÓNICOS SIN DOCTYPE: SAXON NO BAJA LA DTD REMOTA (GV-25)
 DIR_CANONICOS="$DIR_PROYECTO/tmp/html-canonicos"
 DIR_CODIGO="$DIR_PROYECTO/tmp/codigo/html-revista"
-XSL_NUMERO="$DIR_GBP_LOCAL/xslt/numero-a-html.xsl"
-XSL_ARTICULO="$DIR_GBP_LOCAL/xslt/jats-a-html-articulo.xsl"
-CSS="$DIR_GBP_LOCAL/assets/css/gbpublisher.css"
-JS="$DIR_GBP_LOCAL/assets/js/gbpublisher.js"
+XSL_NUMERO="$DIR_RECURSOS/xslt/numero-a-html.xsl"
+XSL_ARTICULO="$DIR_RECURSOS/xslt/jats-a-html-articulo.xsl"
+CSS="$DIR_RECURSOS/assets/css/gbpublisher.css"
+JS="$DIR_RECURSOS/assets/js/gbpublisher.js"
 
 # --- 4. ENTORNO ---
 paso "verificando el entorno"
@@ -110,8 +110,8 @@ requerir_comandos java xmllint identify convert sha256sum iconv
 # SIN vnu EL HTML NO SE GENERA: SE SABE ACÁ Y NO AL FINAL (SC-95)
 requerir_vnu
 [[ -f "$RUTA_SAXON" ]]   || morir "Saxon-HE no está en $RUTA_SAXON"
-[[ -f "$XSL_NUMERO" ]]   || morir "Falta la hoja $XSL_NUMERO: actualizá la copia local (~/.gbpublisher/xslt)"
-[[ -f "$XSL_ARTICULO" ]] || morir "Falta la hoja $XSL_ARTICULO: actualizá la copia local (~/.gbpublisher/xslt)"
+[[ -f "$XSL_NUMERO" ]]   || morir "Falta la hoja $XSL_NUMERO: reinstalá gbpublisher"
+[[ -f "$XSL_ARTICULO" ]] || morir "Falta la hoja $XSL_ARTICULO: reinstalá gbpublisher"
 [[ -f "$CSS" ]]          || morir "No se encontró la hoja de estilos: $CSS"
 [[ -f "$JS" ]]           || morir "No se encontró el script: $JS"
 ok "herramientas (con vnu), hojas, hoja de estilos y script"

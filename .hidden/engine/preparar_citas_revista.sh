@@ -60,9 +60,9 @@ fi
 TIEMPO_SAXON=300
 # CUATRO PASADAS DE LuaLaTeX Y UNA DE biber SOBRE UN DOCUMENTO CHICO
 TIEMPO_MAKE4HT=900
-XSL_CITAS="$DIR_GBP_LOCAL/xslt/jats-a-latex-citas.xsl"
-XSL_NUMERO="$DIR_GBP_LOCAL/xslt/numero-a-latex.xsl"
-CFG="$DIR_GBP_LOCAL/latex/cita-tex4ht.cfg"
+XSL_CITAS="$DIR_RECURSOS/xslt/jats-a-latex-citas.xsl"
+XSL_NUMERO="$DIR_RECURSOS/xslt/numero-a-latex.xsl"
+CFG="$DIR_RECURSOS/latex/cita-tex4ht.cfg"
 # EL VOLCADO: LA MISMA RUTA Y VERSIÓN QUE m_CanonicoRevista. SI CAMBIAN
 # ALLÁ, CAMBIAN ACÁ (Y EN LOS OTROS LECTORES)
 VOLCADO_REL="tmp/numero-datos.xml"
@@ -229,8 +229,8 @@ esac
 requerir_comandos java xmllint timeout make4ht lualatex biber
 
 [[ -f "$RUTA_SAXON" ]]  || morir "Saxon-HE no está en $RUTA_SAXON"
-[[ -f "$XSL_CITAS" ]]   || morir "Falta la hoja $XSL_CITAS: actualizá la copia local (~/.gbpublisher/xslt)"
-[[ -f "$XSL_NUMERO" ]]  || morir "Falta la hoja $XSL_NUMERO: actualizá la copia local (~/.gbpublisher/xslt)"
+[[ -f "$XSL_CITAS" ]]   || morir "Falta la hoja $XSL_CITAS: reinstalá gbpublisher"
+[[ -f "$XSL_NUMERO" ]]  || morir "Falta la hoja $XSL_NUMERO: reinstalá gbpublisher"
 [[ -f "$CFG" ]]         || morir "No se encontró la configuración de tex4ht: $CFG"
 
 # EL VOLCADO

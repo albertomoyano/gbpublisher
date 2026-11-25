@@ -34,7 +34,7 @@ fi
 XML="$1"
 CARPETA="${2%/}"
 FORMATO="$3"
-XSL="$DIR_GBP_LOCAL/xslt/extraer-codigo.xsl"
+XSL="$DIR_RECURSOS/xslt/extraer-codigo.xsl"
 LUA="$DIR_ENGINE/colorear_codigo.lua"
 
 [[ "$FORMATO" == "html" || "$FORMATO" == "latex" ]] || morir "Formato desconocido: $FORMATO"
@@ -54,7 +54,7 @@ mkdir -p "$CARPETA" || morir "No se pudo crear $CARPETA"
 CARPETA_ABS="$(readlink -f "$CARPETA")"
 # EL CANÓNICO DE REVISTA DECLARA EL DTD DE JATS POR URL: CON EL CATÁLOGO
 # LOCAL SE RESUELVE SIN RED, COMO EN LA SALIDA PDF. AL DOCBOOK NO LE AFECTA
-CATALOGO="$DIR_GBP_LOCAL/dtd/catalog-jats-v1-4-no-base.xml"
+CATALOGO="$DIR_RECURSOS/dtd/catalog-jats-v1-4-no-base.xml"
 OPC_CATALOGO=()
 [[ -f "$CATALOGO" ]] && OPC_CATALOGO=(-catalog:"$CATALOGO")
 salida=$(timeout "$TIEMPO_SAXON" java -Djavax.xml.accessExternalDTD=all -jar "$RUTA_SAXON" \

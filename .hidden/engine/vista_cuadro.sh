@@ -135,7 +135,7 @@ IDIOMA="$4"
 
 DIR_VISTA="$DIR_PROYECTO/tmp/vista-cuadro"
 VEREDICTO="$DIR_VISTA/veredicto.txt"
-DIR_FILTROS="$DIR_GBP_LOCAL/filters"
+DIR_FILTROS="$DIR_RECURSOS/filters"
 
 # EL VEREDICTO SE EMPIEZA ANTES QUE NADA: GAMBAS LO LEE SIEMPRE, Y UNO VIEJO
 # DIRÍA ALGO DE OTRO CUADRO
@@ -150,7 +150,7 @@ case "$TIPO" in
         FORMATO="docbook5"
         ARGS_FORMATO=(--mathml --metadata gb-idioma-pieza="$IDIOMA")
         ABRE="$ENVOLTORIO_LIBRO_ABRE"; CIERRA="$ENVOLTORIO_LIBRO_CIERRA"
-        XSL="$DIR_GBP_LOCAL/xslt/vista-cuadro-libro.xsl"
+        XSL="$DIR_RECURSOS/xslt/vista-cuadro-libro.xsl"
         ;;
     revista)
         FILTROS=("${FILTROS_REVISTA[@]}")
@@ -158,7 +158,7 @@ case "$TIPO" in
         # LA MISMA FORMA QUE m_XML.ArgumentoIdiomaPandoc
         ARGS_FORMATO=(-M gb-idioma="$IDIOMA")
         ABRE="$ENVOLTORIO_REVISTA_ABRE"; CIERRA="$ENVOLTORIO_REVISTA_CIERRA"
-        XSL="$DIR_GBP_LOCAL/xslt/vista-cuadro-revista.xsl"
+        XSL="$DIR_RECURSOS/xslt/vista-cuadro-revista.xsl"
         ;;
     *)  frenar "tipo desconocido: «$TIPO» (se espera libro o revista)" ;;
 esac

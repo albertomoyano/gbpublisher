@@ -113,8 +113,8 @@ fi
 TIEMPO_PANDOC=120
 TIEMPO_SAXON=120
 
-XSL="$DIR_GBP_LOCAL/xslt/ensamblar-capitulo-canonico.xsl"
-DIR_FILTROS="$DIR_GBP_LOCAL/filters"
+XSL="$DIR_RECURSOS/xslt/ensamblar-capitulo-canonico.xsl"
+DIR_FILTROS="$DIR_RECURSOS/filters"
 
 # LA LISTA QUE ESTE SCRIPT LE PASA AL VALIDADOR, RELATIVA AL PROYECTO
 LISTA_VALIDAR="tmp/lote-validar.txt"

@@ -123,10 +123,10 @@ fi
 
 # --- 2. CONFIGURACIÓN ---
 TIEMPO_SAXON=120
-XSL_NUMERO="$DIR_GBP_LOCAL/xslt/numero-a-latex.xsl"
-XSL_ARTICULO="$DIR_GBP_LOCAL/xslt/jats-a-latex-articulo.xsl"
-XSL_MAESTRO="$DIR_GBP_LOCAL/xslt/numero-maestro-latex.xsl"
-DIR_ICONOS="$DIR_GBP_LOCAL/fonts/"
+XSL_NUMERO="$DIR_RECURSOS/xslt/numero-a-latex.xsl"
+XSL_ARTICULO="$DIR_RECURSOS/xslt/jats-a-latex-articulo.xsl"
+XSL_MAESTRO="$DIR_RECURSOS/xslt/numero-maestro-latex.xsl"
+DIR_ICONOS="$DIR_RECURSOS/fonts/"
 
 # EL VOLCADO: LA MISMA RUTA Y VERSIÓN QUE m_CanonicoRevista. SI CAMBIAN
 # ALLÁ, CAMBIAN ACÁ. LA 3 (12/11/2026) SUMA LAS PRELIMINARES Y LA PÁGINA LEGAL;
@@ -141,8 +141,9 @@ NIVEL="2u"
 # ENTRA EN LA PRIMERA PÁGINA (\gbcolocarcolumna, 4.4)
 AVISO_COLUMNA="Package gbpublisher Warning: columna-primera-pagina"
 
-# LAS CAPAS QUE EL main CARGA. LAS COPIA GAMBAS DE ~/.gbpublisher/latex AL
-# ABRIR EL PROYECTO (CopiarRecursosLatex)
+# LAS CAPAS QUE EL main CARGA. LAS COPIA GAMBAS AL ABRIR EL PROYECTO
+# (CopiarRecursosLatex): LAS DEL PAQUETE Y, ENCIMA, LA ESTÉTICA DE LA
+# EDITORIAL SI LA HAY (SC-11)
 CAPAS=(preambulo-revista-contrato.tex preambulo-revista-estetica.tex
        preambulo-contrato-comun.tex cita-cadenas-es.tex)
 
@@ -456,9 +457,9 @@ cd "$DIR_PROYECTO" || morir "No se pudo entrar a $DIR_PROYECTO"
 # REVISTA NO TIENE ÍNDICES
 requerir_comandos lualatex biber java xmllint pdfinfo perl iconv
 [[ -f "$RUTA_SAXON" ]]   || morir "Saxon-HE no está en $RUTA_SAXON"
-[[ -f "$XSL_NUMERO" ]]   || morir "Falta la hoja $XSL_NUMERO: actualizá la copia local (~/.gbpublisher/xslt)"
-[[ -f "$XSL_ARTICULO" ]] || morir "Falta la hoja $XSL_ARTICULO: actualizá la copia local (~/.gbpublisher/xslt)"
-[[ -f "$XSL_MAESTRO" ]]  || morir "Falta la hoja $XSL_MAESTRO: actualizá la copia local (~/.gbpublisher/xslt)"
+[[ -f "$XSL_NUMERO" ]]   || morir "Falta la hoja $XSL_NUMERO: reinstalá gbpublisher"
+[[ -f "$XSL_ARTICULO" ]] || morir "Falta la hoja $XSL_ARTICULO: reinstalá gbpublisher"
+[[ -f "$XSL_MAESTRO" ]]  || morir "Falta la hoja $XSL_MAESTRO: reinstalá gbpublisher"
 [[ -d "$DIR_ICONOS" ]]   || morir "Falta la carpeta de los íconos: $DIR_ICONOS"
 # SIN veraPDF NO SE PUEDE AFIRMAR LA NORMA: NO SE COMPILA EN VANO
 VERAPDF="$(buscar_verapdf)"
@@ -486,6 +487,8 @@ for capa in "${CAPAS[@]}" "cita-$ESTILO-config.tex"; do
 done
 [[ -f "$ARCHIVO_BIB" ]] || morir "No existe referencias/$NOMBRE_BIB: lo exporta gbpublisher antes de generar"
 ok "capas de LaTeX, estilo $ESTILO y referencias/$NOMBRE_BIB"
+# LA ESTÉTICA DE LA EDITORIAL, SI LA HAY, SE DECLARA (SC-11)
+avisar_estetica_editorial "$DIR_LATEX/preambulo-revista-estetica.tex"
 
 # biber BUSCA EL .bib DEL «CÓMO CITAR» (latex/cita-{archivo}.bib) POR
 # BIBINPUTS: correr_biber ANTEPONE EL PROYECTO Y referencias/ A LO QUE YA HAY

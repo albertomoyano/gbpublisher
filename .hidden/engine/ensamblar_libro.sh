@@ -87,7 +87,7 @@ CANONICO="$DIR_PROYECTO/jats/c-libro-$NOMBRE_BASE.xml"
 # EL TEMPORAL VA EN LA MISMA CARPETA QUE EL DEFINITIVO: SI ESTUVIERA EN OTRO
 # SISTEMA DE ARCHIVOS, mv DEJARÍA DE SER UN RENOMBRE Y PASARÍA A SER UNA COPIA
 TEMPORAL="$DIR_PROYECTO/jats/.c-libro-$NOMBRE_BASE.xml.tmp"
-XSL="$DIR_GBP_LOCAL/xslt/ensamblar-libro-canonico.xsl"
+XSL="$DIR_RECURSOS/xslt/ensamblar-libro-canonico.xsl"
 
 # --- 3. ENTORNO ---
 paso "verificando el entorno"

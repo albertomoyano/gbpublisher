@@ -246,17 +246,17 @@ MANIFIESTO_REL="tmp/manifiesto-libro-$NOMBRE_BASE.xml"
 DIR_DOCS="$DIR_PROYECTO/docs"
 DIR_ASSETS="$DIR_DOCS/assets"
 INDEX="$DIR_DOCS/index.html"
-XSL="$DIR_GBP_LOCAL/xslt/docbook-to-html.xsl"
+XSL="$DIR_RECURSOS/xslt/docbook-to-html.xsl"
 # LA INTEGRADA IMPORTA LA AUTÓNOMA: LAS DOS TIENEN QUE ESTAR
-XSL_PORTAL="$DIR_GBP_LOCAL/xslt/docbook-to-html-portal.xsl"
-CSS_INTEGRADO="$DIR_GBP_LOCAL/assets/css/gbpublisher-integrado.css"
+XSL_PORTAL="$DIR_RECURSOS/xslt/docbook-to-html-portal.xsl"
+CSS_INTEGRADO="$DIR_RECURSOS/assets/css/gbpublisher-integrado.css"
 # LAS PRIMERAS DE LA PÁGINA DE ENTRADA: LAS ESCRIBE GAMBAS
 # (m_GenerarEpubLibro.EscribirPrimerasHtml, CONSTANTE CARPETA_PRIMERAS_HTML)
 DIR_PRIMERAS="$DIR_PROYECTO/tmp/html-portal"
 DIR_MARCO="$DIR_ASSETS/marco"
 COLOFON="$DIR_PROYECTO/tmp/colofon-digital.xml"
-CSS="$DIR_GBP_LOCAL/assets/css/gbpublisher.css"
-JS="$DIR_GBP_LOCAL/assets/js/gbpublisher.js"
+CSS="$DIR_RECURSOS/assets/css/gbpublisher.css"
+JS="$DIR_RECURSOS/assets/js/gbpublisher.js"
 # LA PASADA DE CITAS (SC-57): LOS INSUMOS LOS ESCRIBE GAMBAS
 # (m_GenerarPDFLibro.EscribirInsumosCitas) CON LOS NOMBRES DE SUS CONSTANTES
 # LISTA_PIEZAS_LATEX E INSUMOS_CITAS. LA CARPETA ES DE ESTA SALIDA

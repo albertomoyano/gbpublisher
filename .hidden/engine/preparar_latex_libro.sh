@@ -65,7 +65,7 @@ fi
 
 # --- 1. CONFIGURACIÓN ---
 TIEMPO_SAXON=300
-XSL="$DIR_GBP_LOCAL/xslt/docbook-to-latex.xsl"
+XSL="$DIR_RECURSOS/xslt/docbook-to-latex.xsl"
 COLOREAR="$DIR_ENGINE/colorear_codigo.sh"
 
 # ============================================================================

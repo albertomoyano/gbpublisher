@@ -13,6 +13,14 @@
 ' Dependencias: m_ConexionBD, m_Sonido, m_Timer, m_Bibtex,
 '             m_FuncionesGenericas, FMain.
 ' ==============================================================================
+' LAS CAPAS QUE UNA EDITORIAL PUEDE REEMPLAZAR DESDE ~/.gbpublisher/editorial/latex/
+' (SC-11): SOLO LA ESTÉTICA, DE LIBROS Y DE REVISTAS. EL CONTRATO NO
+Private $aCapasEditorial As String[] = ["preambulo-estetica.tex", "preambulo-revista-estetica.tex"]
+' LA PRIMERA LÍNEA DE UNA CAPA DE LA EDITORIAL COPIADA AL PROYECTO. LA BUSCAN
+' compilar_pdf_libro.sh Y generar_pdf_revista.sh PARA AVISARLA: UN CAMBIO VA EN
+' LOS TRES
+Public Const MARCA_EDITORIAL As String = "% gbpublisher: estética de la editorial:"
+
 
 ' --- ESTADO DE SESIÓN ACTIVA AL SERVIDOR ---
 ' SE ASIGNAN AL VALIDAR CREDENCIALES EN FLogin.btnConectarServer_Click Y
@@ -78,19 +86,23 @@ End
 
 ' ============================================
 ' Función   : DirectorioOcultoApp
-' Propósito : Crea el directorio oculto ~/.gbpublisher con sus subcarpetas
-'             de recursos, copia los archivos base desde el paquete instalado
-'             (o desde .hidden/ si se ejecuta desde el IDE), crea el archivo
-'             de IPs y asegura la existencia del buscador.py.
-'             Esta función se llama una vez al inicio de la app.
+' Propósito : Crea ~/.gbpublisher y las carpetas de lo que es del usuario:
+'             respaldos, snippets, patrones, scripts propios y la estética de
+'             la editorial; y el archivo de IPs. Se llama una vez al inicio.
+' Nota      : DESDE EL 25/11/2026 NO SE COPIA NINGÚN RECURSO DEL PAQUETE (SC-11,
+'             MODELO NUEVO): xslt, latex, filters, assets, themes, chart, llm,
+'             auditor, fonts, dtd, schemas Y LO DEMÁS SE LEEN DE RutaRecursos()
+'             (/usr/share/gbpublisher INSTALADO, .hidden/ DESDE EL IDE). UNA
+'             COPIA LOCAL ERA, EN LA PRÁCTICA, UNA COPIA VIEJA. LAS CARPETAS
+'             VIEJAS DE ~/.gbpublisher NO SE BORRAN ACÁ: LAS ARCHIVA EL SCRIPT
+'             DE LIMPIEZA
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
 Public Sub DirectorioOcultoApp()
 
   Dim sBase As String
-  Dim carpetas As String[]
-  Dim carpeta As String
+  Dim sCarpeta As String
   Dim sRutaIPs As String
 
   ' --- 1. CREAR DIRECTORIO BASE SI NO EXISTE ---
@@ -104,21 +116,19 @@ Public Sub DirectorioOcultoApp()
     Endif
   Endif
 
-  ' --- 2. COPIAR CONTENIDO DE CARPETAS DEL SISTEMA ---
-  ' Themes: GRAMÁTICAS .highlight Y TEMAS .theme, LEÍDOS DESDE LA COPIA LOCAL POR m_ResaltadoSintaxis
-  ' llm: CATÁLOGO DE PROVEEDORES Y PROMPT DEL ANÁLISIS DE REFERENCIAS (m_LLM)
-  carpetas = ["auditor", "chart", "dtd", "filters",
-    "fonts", "github", "media", "schemas", "latex",
-    "scripts", "xslt", "assets", "assets/css", "assets/js", "themes", "llm"]
-  ' sonido NO SE COPIA: m_Sonido LO LEE DE RutaRecursos() (SC-11, QUÉ NO SE COPIA)
-  ' schematron TAMPOCO: LAS REGLAS COMPILADAS SE LEEN DEL SISTEMA (SC-11) Y EL
-  ' RESTO ES DE LOS GENERADORES DEL REPOSITORIO. SE COPIABA SIN QUE NADIE LEYERA
-  ' LA COPIA (HASTA EL 18/11/2026, SC-97)
-
-  For Each carpeta In carpetas
-    CopiarDirectorio(RutaRecursos() & "/" & carpeta, User.Home & "/.gbpublisher/" & carpeta)
-    ' DESPUÉS DE COPIAR LA CARPETA fonts, AJUSTAR EL COLOR DE LOS ICONOS SVG
-    If carpeta = "fonts" Then CopiarIconosSVG()
+  ' --- 2. LAS CARPETAS DEL USUARIO ---
+  ' scripts: LOS SCRIPTS DE PERSONALIZACIÓN PROPIOS (LOS DEL PAQUETE SE LEEN DEL
+  ' SISTEMA, CargarScripts). editorial/latex: LA ESTÉTICA DE LA EDITORIAL, QUE
+  ' REEMPLAZA A LA DEL PAQUETE AL COPIARSE AL PROYECTO (CopiarRecursosLatex).
+  ' IsDir Y NO Exist (GV-01)
+  For Each sCarpeta In ["scripts", "editorial", "editorial/latex"]
+    If Not IsDir(sBase &/ sCarpeta) Then
+      Try Mkdir sBase &/ sCarpeta
+      If Error Then
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo crear la carpeta " & sCarpeta & ":" & Chr(10) & Error.Text)
+      Endif
+    Endif
   Next
 
   ' --- 3. CREAR DIRECTORIO DE RESPALDO ---
@@ -131,7 +141,6 @@ Public Sub DirectorioOcultoApp()
   Endif
 
   ' --- 4. CREAR LA CARPETA DE SNIPPETS, VACÍA (SC-21) ---
-  ' NO VA EN LA LISTA DE COPIA DEL APARTADO 2: NO HAY NADA QUE COPIAR DESDE EL SISTEMA
   ' IsDir Y NO Exist: Exist TAMBIÉN DA True PARA UN ARCHIVO (GV-01)
   If Not IsDir(sBase &/ "snippets") Then
     Try Mkdir sBase &/ "snippets"
@@ -142,8 +151,7 @@ Public Sub DirectorioOcultoApp()
   Endif
 
   ' --- 5. CREAR LA CARPETA DE PATRONES DE EXPRESIONES REGULARES, VACÍA (SC-51) ---
-  ' NO VA EN LA LISTA DE COPIA DEL APARTADO 2: NO HAY JUEGO DE LA CASA, NADA
-  ' QUE COPIAR DESDE EL SISTEMA. IsDir Y NO Exist (GV-01)
+  ' NO HAY JUEGO DE LA CASA. IsDir Y NO Exist (GV-01)
   If Not IsDir(sBase &/ "regex") Then
     Try Mkdir sBase &/ "regex"
     If Error Then
@@ -166,257 +174,10 @@ Public Sub DirectorioOcultoApp()
 End
 
 ' ============================================
-' Función   : VerificarRecursosLocales
-' Propósito : Coteja la copia local de trabajo (~/.gbpublisher) con los
-'             recursos instalados y, si difieren, ofrece reemplazarla. Es la
-'             contrapartida de SC-11: la copia local no se sobrescribe sola, y
-'             después de instalar una versión nueva una hoja vieja puede correr
-'             con un script nuevo (o al revés) sin ningún error: la salida sale
-'             con la regla anterior, o Saxon frena por un parámetro que falta.
-'             Se llama al arrancar, después de DirectorioOcultoApp.
-' Parámetros: (ninguno)
-' Retorna   : (Sub, sin retorno)
-' Nota      : SE COTEJAN LAS CARPETAS QUE INTERVIENEN EN LAS SALIDAS Y EN EL
-'             EDITOR. UN ARCHIVO QUE SOLO EXISTE EN LA COPIA LOCAL NO SE MIRA:
-'             PUEDE SER DEL USUARIO (UN SCRIPT, UN TEMA PROPIO). DESDE EL IDE LOS
-'             RECURSOS SON LOS DE .hidden/, Y EL COTEJO AVISA IGUAL CUANDO EL
-'             REPOSITORIO AVANZÓ Y LA COPIA LOCAL QUEDÓ ATRÁS.
-' ============================================
-Public Sub VerificarRecursosLocales()
-
-  Dim aCarpetas As String[]
-  Dim aArchivos As String[]
-  Dim aDistintos As New String[]
-  Dim aIlegibles As New String[]
-  Dim sCarpeta As String
-  Dim sArchivo As String
-  Dim sDirSistema As String
-  Dim sDirLocal As String
-  Dim sContenidoSistema As String
-  Dim sContenidoLocal As String
-  Dim iRespuesta As Integer
-
-  ' --- 1. CARPETAS COTEJADAS ---
-  ' chart: LA PLANTILLA DE LOS GRÁFICOS, Chart.js Y SUS FUENTES (SC-69).
-  ' engine/grafico.sh LOS LEE DE LA COPIA LOCAL; SIN COTEJO, UNA PLANTILLA
-  ' NUEVA NO LLEGABA NUNCA (EL 29/10/2026, EL HUECO TITULO)
-  ' sonido: LOS AVISOS SONOROS SE LEEN DE LA COPIA LOCAL (m_Sonido); SIN COTEJO,
-  ' UN SONIDO NUEVO NO LLEGABA NUNCA (EL 30/10/2026, OpenApp.wav)
-  aCarpetas = ["xslt", "filters", "latex", "assets/css", "assets/js", "themes", "chart"]
-
-  ' --- 2. COTEJO ARCHIVO POR ARCHIVO ---
-  For Each sCarpeta In aCarpetas
-    sDirSistema = RutaRecursos() &/ sCarpeta
-    sDirLocal = User.Home &/ ".gbpublisher" &/ sCarpeta
-    If Not IsDir(sDirSistema) Then Continue
-
-    ' "*" CON gb.File Y NO "*.*", QUE OMITE LOS ARCHIVOS SIN EXTENSIÓN (GV-01)
-    Try aArchivos = Dir(sDirSistema, "*", gb.File)
-    If Error Then
-      aIlegibles.Add(sCarpeta)
-      Continue
-    Endif
-
-    For Each sArchivo In aArchivos
-      ' SI FALTA EN LA COPIA LOCAL, YA LO REPUSO DirectorioOcultoApp
-      If Not Exist(sDirLocal &/ sArchivo) Then Continue
-
-      Try sContenidoSistema = File.Load(sDirSistema &/ sArchivo)
-      If Error Then
-        aIlegibles.Add(sCarpeta &/ sArchivo)
-        Continue
-      Endif
-      Try sContenidoLocal = File.Load(sDirLocal &/ sArchivo)
-      If Error Then
-        aIlegibles.Add(sCarpeta &/ sArchivo)
-        Continue
-      Endif
-
-      If sContenidoSistema <> sContenidoLocal Then aDistintos.Add(sCarpeta &/ sArchivo)
-    Next
-  Next
-
-  ' --- 3. LO QUE NO SE PUDO LEER SE INFORMA: NO ES UN CANAL MUDO (GV-23) ---
-  If aIlegibles.Count > 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No se pudieron cotejar estos recursos con los instalados:" & Chr(10) & Chr(10) &
-      "  " & aIlegibles.Join(Chr(10) & "  "))
-  Endif
-
-  If aDistintos.Count = 0 Then Return
-
-  ' --- 4. AVISO Y DECISIÓN ---
-  m_Sonido.sonar("Warning")
-  iRespuesta = Message.Question("Estos recursos de ~/.gbpublisher difieren de los instalados en" & Chr(10) &
-    RutaRecursos() & ":" & Chr(10) & Chr(10) &
-    "  " & aDistintos.Join(Chr(10) & "  ") & Chr(10) & Chr(10) &
-    "Suele pasar después de instalar una versión nueva: la copia local no se sobrescribe sola, y una hoja vieja con un script nuevo da salidas con la regla anterior o falla." & Chr(10) & Chr(10) &
-    "Reemplazar guarda los actuales en ~/.gbpublisher/respaldo/ y copia los instalados.",
-    "Reemplazar", "Ahora no")
-  If iRespuesta <> 1 Then Return
-
-  ' --- 5. RESPALDO Y REEMPLAZO ---
-  ReemplazarRecursosLocales(aDistintos)
-
-End
-
-' ============================================
-' Función   : ReemplazarRecursosLocales
-' Propósito : Respalda los recursos locales indicados y los reemplaza por los
-'             instalados. Al terminar informa qué se reemplazó y dónde quedó
-'             el respaldo; si algo falla, dice dónde quedó cada cosa
-' Parámetros: aRutas As String[] — rutas relativas a ~/.gbpublisher
-'             («xslt/docbook-to-html.xsl»)
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Private Sub ReemplazarRecursosLocales(aRutas As String[])
-
-  Dim sRuta As String
-  Dim sLocal As String
-  Dim sSistema As String
-  Dim sRespaldo As String
-  Dim sRespaldoArchivo As String
-  Dim aFallos As New String[]
-  Dim iReemplazados As Integer
-
-  ' --- 1. CARPETA DE RESPALDO DE ESTA CORRIDA ---
-  sRespaldo = User.Home &/ ".gbpublisher/respaldo" &/ "recursos-" & Format(Now, "yyyymmdd-hhnnss")
-
-  ' --- 2. ARCHIVO POR ARCHIVO: RESPALDO, BORRADO, COPIA ---
-  ' Copy SOBRE UN DESTINO EXISTENTE NO ESTÁ VERIFICADO: SE BORRA ANTES, COMO EN
-  ' EL PATRÓN DE ESCRITURA ATÓMICA (GV-39). SI LA COPIA FALLA DESPUÉS DEL
-  ' BORRADO, EL ARCHIVO ANTERIOR ESTÁ EN EL RESPALDO Y EL MENSAJE LO DICE
-  For Each sRuta In aRutas
-    sLocal = User.Home &/ ".gbpublisher" &/ sRuta
-    sSistema = RutaRecursos() &/ sRuta
-    sRespaldoArchivo = sRespaldo &/ sRuta
-
-    ' mkdir -p POR Exec SOBRE UN ARRAY, SIN SHELL (SC-05): CREA LOS NIVELES
-    ' INTERMEDIOS (respaldo/recursos-…/assets/css)
-    Try Exec ["mkdir", "-p", File.Dir(sRespaldoArchivo)] Wait
-    If Error Then
-      aFallos.Add(sRuta & " — no se pudo crear el respaldo")
-      Continue
-    Endif
-
-    Try Copy sLocal To sRespaldoArchivo
-    If Error Then
-      aFallos.Add(sRuta & " — no se pudo respaldar: no se tocó")
-      Continue
-    Endif
-
-    Try Kill sLocal
-    If Error Then
-      aFallos.Add(sRuta & " — no se pudo reemplazar: no se tocó")
-      Continue
-    Endif
-
-    Try Copy sSistema To sLocal
-    If Error Then
-      aFallos.Add(sRuta & " — se borró y no se pudo copiar el instalado: el anterior está en el respaldo")
-      Continue
-    Endif
-
-    Inc iReemplazados
-  Next
-
-  ' --- 3. INFORME ---
-  If aFallos.Count > 0 Then
-    m_Sonido.sonar("Error")
-    Message.Error(CStr(iReemplazados) & " recurso(s) reemplazado(s). Fallaron:" & Chr(10) & Chr(10) &
-      "  " & aFallos.Join(Chr(10) & "  ") & Chr(10) & Chr(10) &
-      "Respaldo: " & sRespaldo)
-    Return
-  Endif
-
-  m_Sonido.sonar("Info")
-  Message.Info(CStr(iReemplazados) & " recurso(s) reemplazado(s) por los instalados." & Chr(10) & Chr(10) &
-    "Los anteriores quedaron en:" & Chr(10) & sRespaldo)
-
-End
-
-' ============================================
-' Función   : CopiarIconosSVG
-' Propósito : Copia los archivos .svg de la carpeta de recursos al directorio
-'             del usuario reemplazando el color "currentColor" por el azul
-'             institucional de la app. Útil para que los iconos hereden el
-'             color de la app sin depender del navegador.
-' Parámetros: (ninguno)
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Public Sub CopiarIconosSVG()
-
-  Dim srcDir As String
-  Dim dstDir As String
-  Dim f As String
-  Dim sContenido As String
-
-  ' --- 1. RUTAS ORIGEN Y DESTINO ---
-  srcDir = RutaRecursos() &/ "fonts"
-  dstDir = User.Home &/ ".gbpublisher" &/ "fonts"
-
-  ' --- 2. PROCESAR CADA ARCHIVO SVG ---
-  For Each f In Dir(srcDir, "*.svg")
-
-    ' LEER CONTENIDO DEL SVG ORIGINAL
-    Try sContenido = File.Load(srcDir &/ f)
-    If Error Then Continue
-
-    ' REEMPLAZAR COLOR DE RELLENO POR azulrevista
-    sContenido = Replace(sContenido, "currentColor", "#2D5A8E")
-
-    ' ESCRIBIR SVG COLOREADO EN DESTINO
-    Try File.Save(dstDir &/ f, sContenido)
-    If Error Then
-      Message.Error("Error guardando: " & f & Chr(10) & Error.Text)
-    Endif
-
-  Next
-
-End
-
-' ============================================
-' Función   : CopiarDirectorio
-' Propósito : Copia recursivamente el contenido de un directorio hacia un
-'             destino, preservando la estructura de subdirectorios y omitiendo
-'             archivos ya existentes.
-' Parámetros: srcDir As String — ruta absoluta del directorio origen
-'             dstDir As String — ruta absoluta del directorio destino
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Public Sub CopiarDirectorio(srcDir As String, dstDir As String)
-
-  Dim f As String
-
-  ' --- 1. VERIFICAR QUE EL DIRECTORIO ORIGEN EXISTE ---
-  If Not Exist(srcDir) Then
-    ' DIAGNÓSTICO: REGISTRAR QUÉ DIRECTORIO ORIGEN FALTA EN LA TERMINAL
-    FMain.TerminalViewProyecto.Input("echo 'FALTA srcDir: " & srcDir & "'" & Chr(10))
-    Return
-  Endif
-
-  ' --- 2. CREAR CARPETA DESTINO SI NO EXISTE ---
-  If Not Exist(dstDir) Then
-    Mkdir dstDir
-  Endif
-
-  ' --- 3. PRIMERA PASADA: COPIAR SUBDIRECTORIOS RECURSIVAMENTE ---
-  For Each f In Dir(srcDir, "*", gb.Directory)
-    CopiarDirectorio(srcDir & "/" & f, dstDir & "/" & f)
-  Next
-
-  ' --- 4. SEGUNDA PASADA: COPIAR ARCHIVOS ---
-  For Each f In Dir(srcDir, "*.*")
-    If Not Exist(dstDir & "/" & f) Then
-      Copy srcDir & "/" & f To dstDir & "/" & f
-    Endif
-  Next
-
-End
-
-' ============================================
 ' Función   : CargarScripts
-' Propósito : Carga el ComboBox de scripts disponibles desde ~/.gbpublisher/scripts.
+' Propósito : Carga el ComboBox de scripts: los del paquete (RutaRecursos()/
+'             scripts) y los propios (~/.gbpublisher/scripts). Un propio con
+'             el mismo nombre que uno del paquete lo reemplaza (RutaScript).
 '             Soporta extensiones .py, .lua, .sh, .pl, .R. La descripción se
 '             extrae de la primera línea de comentario del archivo (salteando
 '             el shebang si existe).
@@ -439,26 +200,22 @@ Public Sub CargarScripts()
   Dim todosArchivos As New String[]
   Dim rutaCompleta As String
 
-  rutaScripts = User.Home &/ ".gbpublisher/scripts"
-
-  ' --- 1. VERIFICAR QUE EL DIRECTORIO EXISTE ---
-  If Not Exist(rutaScripts) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El directorio de scripts no existe: " & rutaScripts)
-    Return
-  Endif
-
   FMain.ComboBoxScripts.Clear
 
-  ' --- 2. RECOPILAR ARCHIVOS DE TODAS LAS EXTENSIONES SOPORTADAS ---
+  ' --- 1 Y 2. RECOPILAR LOS ARCHIVOS DE LAS DOS CARPETAS ---
+  ' PRIMERO LOS PROPIOS, DESPUÉS LOS DEL PAQUETE QUE NO TIENEN UNO PROPIO CON
+  ' EL MISMO NOMBRE. UNA CARPETA QUE NO EXISTE NO TIENE SCRIPTS
   extensiones = ["*.py", "*.lua", "*.sh", "*.pl", "*.R"]
-  For Each extension In extensiones
-    archivos = Dir(rutaScripts, extension)
-    If Not Error Then
-      For Each archivo In archivos
-        todosArchivos.Add(archivo)
-      Next
-    Endif
+  For Each rutaScripts In [User.Home &/ ".gbpublisher" &/ "scripts", RutaRecursos() &/ "scripts"]
+    If Not IsDir(rutaScripts) Then Continue
+    For Each extension In extensiones
+      Try archivos = Dir(rutaScripts, extension)
+      If Not Error Then
+        For Each archivo In archivos
+          If Not todosArchivos.Exist(archivo) Then todosArchivos.Add(archivo)
+        Next
+      Endif
+    Next
   Next
 
   ' --- 3. SALIR SI NO HAY ARCHIVOS ---
@@ -492,7 +249,7 @@ Public Sub CargarScripts()
         prefijo = "#"
     End Select
 
-    rutaCompleta = rutaScripts &/ archivo
+    rutaCompleta = RutaScript(archivo)
 
     ' --- 5. LEER LA PRIMERA LÍNEA DE COMENTARIO PARA OBTENER DESCRIPCIÓN ---
     Try hFile = Open rutaCompleta For Read
@@ -529,6 +286,20 @@ Public Sub CargarScripts()
     archivoBase = File.BaseName(archivo) & "." & extensionOriginal
     FMain.ComboBoxScripts.Add(descripcion & " [" & archivoBase & "]")
   Next
+
+End
+
+' ============================================
+' Función   : RutaScript
+' Propósito : Dónde está un script del combo: el propio
+'             (~/.gbpublisher/scripts) si existe; si no, el del paquete
+' Parámetros: sNombre As String — nombre del archivo, con su extensión
+' Retorna   : String — la ruta absoluta; la del paquete aunque no exista
+' ============================================
+Public Function RutaScript(sNombre As String) As String
+
+  If Exist(User.Home &/ ".gbpublisher" &/ "scripts" &/ sNombre) Then Return User.Home &/ ".gbpublisher" &/ "scripts" &/ sNombre
+  Return RutaRecursos() &/ "scripts" &/ sNombre
 
 End
 
@@ -1148,16 +919,28 @@ End
 ' ============================================
 ' Función   : CopiarRecursosLatex
 ' Propósito : Copia al proyecto los preámbulos y las configuraciones de estilo
-'             de cita desde ~/.gbpublisher/latex/, sobrescribiendo siempre.
+'             de cita del paquete (RutaRecursos()/latex), sobrescribiendo
+'             siempre, y encima las capas de estética que la editorial puso en
+'             ~/.gbpublisher/editorial/latex/ (SC-11, modelo del 25/11/2026).
 '             Es lo que da autonomía al proyecto: llevando la carpeta a otra
-'             máquina con TeX Live completo, y sin gbpublisher, compila.
+'             máquina con TeX Live completo, y sin gbpublisher, compila. Y con
+'             el .git del proyecto queda la historia de qué preámbulo compuso
+'             cada versión.
 ' Parámetros: sDirLatex As String — {proyecto}/latex
 '             bSilencioso As Boolean — True no muestra mensajes de error
 ' Retorna   : Boolean — True si copió todo
-' Nota      : SE COPIAN TODOS LOS cita-*-config.tex Y NO SOLO EL ACTIVO: SON
-'             ARCHIVOS CHICOS, Y QUE ESTÉN TODOS PERMITE QUE UN
-'             SCRIPT DE PERSONALIZACIÓN CAMBIE DE ESTILO SIN gbpublisher
-'             INSTALADO, QUE ES EL CASO DE USO DE LOS ESTILOS PROPIOS.
+' Nota      : SOLO SE REEMPLAZAN LAS CAPAS DE ESTÉTICA ($aCapasEditorial): EL
+'             CONTRATO ES EL ACUERDO CON LAS HOJAS XSLT, CON SU VERSIÓN
+'             VERIFICADA (\gbRequiereContrato), Y UNA EDITORIAL QUE LO
+'             REEMPLAZARA ROMPERÍA LA COMPOSICIÓN SIN QUE NADA LO EXPLICARA. UN
+'             ARCHIVO DE LA CARPETA QUE NO ES UNA CAPA SE NOMBRA EN LA TERMINAL
+'             Y NO SE COPIA: UN NOMBRE MAL ESCRITO NO PASA EN SILENCIO.
+'             LA CAPA DE LA EDITORIAL LLEGA AL PROYECTO CON UNA PRIMERA LÍNEA
+'             QUE LA DECLARA (MARCA_EDITORIAL): LA COMPOSICIÓN LA AVISA Y QUIEN
+'             ABRA EL PROYECTO AÑOS DESPUÉS SABE QUE NO ES LA DEL PAQUETE.
+'             SE COPIAN TODOS LOS cita-*-config.tex Y NO SOLO EL ACTIVO: SON
+'             ARCHIVOS CHICOS, Y QUE ESTÉN TODOS PERMITE QUE UN SCRIPT DE
+'             PERSONALIZACIÓN CAMBIE DE ESTILO SIN gbpublisher INSTALADO.
 '             LOS ARCHIVOS DERIVADOS —preambulo-proyecto.tex Y main.tex— NO SE
 '             COPIAN: LOS ESCRIBE GAMBAS CON DATOS DE LA BASE.
 '             Dir() CON "*.tex" Y gb.File; NUNCA "*.*", QUE ES UN MODISMO DE
@@ -1165,24 +948,28 @@ End
 ' ============================================
 Public Function CopiarRecursosLatex(sDirLatex As String, Optional bSilencioso As Boolean = False) As Boolean
 
+  ' --- 1. INICIALIZACIÓN ---
   Dim sOrigen As String
+  Dim sEditorial As String
   Dim sArchivo As String
   Dim aArchivos As String[]
+  Dim sContenido As String
 
-  ' --- 1. VALIDACIÓN DEL ORIGEN ---
-  sOrigen = User.Home &/ ".gbpublisher" &/ "latex"
+  sOrigen = RutaRecursos() &/ "latex"
+  sEditorial = User.Home &/ ".gbpublisher" &/ "editorial" &/ "latex"
 
-  If Not Exist(sOrigen) Then
+  ' --- 2. VALIDACIÓN DEL ORIGEN ---
+  If Not IsDir(sOrigen) Then
     If Not bSilencioso Then
       m_Sonido.sonar("Error")
       Message.Error("No existe el directorio de recursos LaTeX:" & gb.NewLine &
-        sOrigen & gb.NewLine & "Verificá la instalación de gbpublisher.")
+        sOrigen & gb.NewLine & "Reinstalá gbpublisher.")
     Endif
     Return False
   Endif
 
-  ' --- 2. VALIDACIÓN DEL DESTINO ---
-  If Not Exist(sDirLatex) Then
+  ' --- 3. VALIDACIÓN DEL DESTINO ---
+  If Not IsDir(sDirLatex) Then
     Try Mkdir sDirLatex
     If Error Then
       If Not bSilencioso Then
@@ -1194,46 +981,68 @@ Public Function CopiarRecursosLatex(sDirLatex As String, Optional bSilencioso As
     Endif
   Endif
 
-  ' --- 3. INVENTARIO DEL ORIGEN ---
+  ' --- 4. INVENTARIO DEL PAQUETE ---
   Try aArchivos = Dir(sOrigen, "*.tex", gb.File)
   If Error Then
     If Not bSilencioso Then
       m_Sonido.sonar("Error")
-      Message.Error("No se pudo leer el directorio de recursos:" & gb.NewLine &
-        Error.Text)
+      Message.Error("No se pudo leer el directorio de recursos:" & gb.NewLine & Error.Text)
     Endif
     Return False
   Endif
-
   If aArchivos.Count = 0 Then
     If Not bSilencioso Then
       m_Sonido.sonar("Error")
-      Message.Error("El directorio de recursos LaTeX está vacío:" & gb.NewLine &
-        sOrigen)
+      Message.Error("El directorio de recursos LaTeX está vacío:" & gb.NewLine & sOrigen)
     Endif
     Return False
   Endif
 
-  ' --- 4. COPIA ---
+  ' --- 5. COPIA DEL PAQUETE ---
   ' SE BORRA EL DESTINO ANTES DE COPIAR: Copy NO SOBRESCRIBE Y FALLA SI EL
-  ' ARCHIVO YA EXISTE. COMO ESTA FUNCIÓN CORRE EN CADA APERTURA DEL PROYECTO,
-  ' SIN ESTO LA COPIA FALLA DESDE LA SEGUNDA VEZ EN ADELANTE. Y COMO AL ABRIR
-  ' VA EN MODO SILENCIOSO, FALLARÍA SIN DECIR NADA: UNA ACTUALIZACIÓN DE
-  ' gbpublisher NUNCA LLEGARÍA AL PROYECTO Y QUEDARÍAN LOS ARCHIVOS VIEJOS
-  ' PARA SIEMPRE.
-  ' SOBRESCRIBIR ES JUSTAMENTE LO QUE SE QUIERE: LA COPIA DEL PROYECTO ES
-  ' DERIVADA Y SIEMPRE DEBE SER LA DE LA APP.
+  ' ARCHIVO YA EXISTE. CORRE EN CADA APERTURA DEL PROYECTO, EN SILENCIO: SIN
+  ' ESTO FALLARÍA DESDE LA SEGUNDA VEZ SIN DECIR NADA. SOBRESCRIBIR ES LO QUE
+  ' SE QUIERE: LA COPIA DEL PROYECTO ES DERIVADA
   For Each sArchivo In aArchivos
-    If Exist(sDirLatex &/ sArchivo) Then
-      Try Kill sDirLatex &/ sArchivo
-    Endif
-
+    If Exist(sDirLatex &/ sArchivo) Then Try Kill sDirLatex &/ sArchivo
     Try Copy sOrigen &/ sArchivo To sDirLatex &/ sArchivo
     If Error Then
       If Not bSilencioso Then
         m_Sonido.sonar("Error")
-        Message.Error("No se pudo copiar el recurso " & sArchivo & ":" &
-          gb.NewLine & Error.Text)
+        Message.Error("No se pudo copiar el recurso " & sArchivo & ":" & gb.NewLine & Error.Text)
+      Endif
+      Return False
+    Endif
+  Next
+
+  ' --- 6. LA ESTÉTICA DE LA EDITORIAL, ENCIMA ---
+  ' CARPETA VACÍA O AUSENTE: LA DEL PAQUETE (EL CASO POR DEFECTO)
+  If Not IsDir(sEditorial) Then Return True
+  Try aArchivos = Dir(sEditorial, "*", gb.File)
+  If Error Then Return True
+  For Each sArchivo In aArchivos
+    ' SOLO LAS CAPAS DE ESTÉTICA, CON SU NOMBRE EXACTO
+    If Not $aCapasEditorial.Exist(sArchivo) Then
+      FMain.TerminalViewProyecto.Input("echo 'gbpublisher: " & sEditorial &/ sArchivo &
+        " no es una capa reemplazable (" & $aCapasEditorial.Join(", ") & "): no se usa'" & Chr(10))
+      Continue
+    Endif
+    Try sContenido = File.Load(sEditorial &/ sArchivo)
+    If Error Then
+      If Not bSilencioso Then
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo leer la estética de la editorial:" & gb.NewLine &
+          sEditorial &/ sArchivo & gb.NewLine & Error.Text)
+      Endif
+      Return False
+    Endif
+    ' LA PRIMERA LÍNEA LA DECLARA (LA LEEN compilar_pdf_libro.sh Y
+    ' generar_pdf_revista.sh)
+    Try File.Save(sDirLatex &/ sArchivo, MARCA_EDITORIAL & " " & sEditorial &/ sArchivo & gb.NewLine & sContenido)
+    If Error Then
+      If Not bSilencioso Then
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo copiar la estética de la editorial " & sArchivo & ":" & gb.NewLine & Error.Text)
       Endif
       Return False
     Endif

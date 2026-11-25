@@ -88,7 +88,7 @@ DIR_SALIDA="$DIR_PROYECTO/salidas/redalyc"
 DIR_TRABAJO="$DIR_PROYECTO/tmp/redalyc-work"
 # LOS CANÓNICOS SIN DOCTYPE: SAXON NO BAJA LA DTD REMOTA (GV-25)
 DIR_CANONICOS="$DIR_PROYECTO/tmp/redalyc-canonicos"
-XSL="$DIR_GBP_LOCAL/xslt/jats-a-marcalyc.xsl"
+XSL="$DIR_RECURSOS/xslt/jats-a-marcalyc.xsl"
 
 # --- 4. ENTORNO ---
 paso "verificando el entorno"
@@ -96,7 +96,7 @@ paso "verificando el entorno"
 [[ "$NOMBRE_BIB" == */* ]] && morir "Nombre de .bib no válido: $NOMBRE_BIB"
 requerir_comandos java xmllint zip identify convert sha256sum iconv stat
 [[ -f "$RUTA_SAXON" ]] || morir "Saxon-HE no está en $RUTA_SAXON"
-[[ -f "$XSL" ]]        || morir "Falta la hoja $XSL: actualizá la copia local (~/.gbpublisher/xslt)"
+[[ -f "$XSL" ]]        || morir "Falta la hoja $XSL: reinstalá gbpublisher"
 ok "herramientas y hoja"
 
 # --- 5. EL VOLCADO ---
