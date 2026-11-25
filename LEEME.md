@@ -27,7 +27,8 @@ Cada versión de gbpublisher (cada *release* en GitHub) trae estos archivos:
 |---|---|
 | `gbpublisher_X.X.deb` | El instalador de la aplicación |
 | `instalar-gbpublisher.sh` | Crea la base de datos en una instalación nueva |
-| `gbpublisher-baseline-1.0.0.sql` | La estructura inicial de la base (no lo abrís directamente) |
+| `configurar-conexion.sh` | Crea el archivo con el que la aplicación se conecta a la base |
+| `gbpublisher-baseline-2.0.0.sql` | La estructura inicial de la base (no lo abrís directamente) |
 | `actualizar-esquema-X.Y.Z.sh` | Las actualizaciones de la base, una por versión de esquema |
 
 La nota de cada versión dice hasta qué actualización de la base corresponde aplicar: por ejemplo, «esquema 1.33.0».
@@ -54,10 +55,11 @@ bash instalar-gbpublisher.sh
 
 Te va a pedir tu contraseña de usuario una sola vez, al principio. Después, el asistente:
 
-1. busca el archivo `gbpublisher-baseline-1.0.0.sql` en la misma carpeta;
+1. busca el archivo `gbpublisher-baseline-2.0.0.sql` en la misma carpeta;
 2. pregunta si otras computadoras se van a conectar a esta base por la red (respondé **no** si gbpublisher se usa solo en esta computadora);
 3. avisa que va a borrar la base existente y pide que escribas `SI`, en mayúsculas;
-4. crea la base, el usuario de conexión de la aplicación, y comprueba el resultado.
+4. crea la base, el usuario de conexión de la aplicación, y comprueba el resultado;
+5. crea el archivo con el que gbpublisher se conecta a la base. Para eso vuelve a pedir tu contraseña.
 
 Si todo salió bien, termina con:
 
@@ -68,14 +70,13 @@ Ya podés abrir gbpublisher.
 
 ### Paso 3 — Llevar la base a la versión actual
 
-El baseline es la base tal como era en la versión 1.0.0. Las actualizaciones la llevan al día. Hay que aplicarlas **en orden**, desde la 1.1.0 hasta la que indica la nota de la versión:
+El baseline es la base tal como era en la versión 2.0.0. Si la nota de la versión indica un esquema posterior (por ejemplo, «esquema 2.1.0»), aplicá **en orden** las actualizaciones que siguen a la 2.0.0:
 
 ```
-sudo bash actualizar-esquema-1.1.0.sh
-sudo bash actualizar-esquema-1.2.0.sh
-...
-sudo bash actualizar-esquema-1.34.0.sh
+sudo bash actualizar-esquema-2.1.0.sh
 ```
+
+Si la nota dice «esquema 2.0.0», no hay nada que aplicar.
 
 Cada actualización:
 
@@ -120,12 +121,17 @@ Este control se puede repetir cuando quieras: no rompe nada que esté bien.
 Cuando sale una versión nueva:
 
 1. Instalá el `.deb` nuevo con doble clic, como en el Paso 1.
-2. Aplicá, en orden, las actualizaciones de la base que todavía no tengas, hasta la que indica la nota de la versión. Para saber cuál fue la última aplicada:
+2. **Una sola vez, al pasar a la primera versión que usa el archivo de conexión:** antes de abrir gbpublisher, abrí una terminal en la carpeta de la versión y escribí, **sin sudo**:
+   ```
+   bash configurar-conexion.sh
+   ```
+   Genera una clave nueva para la conexión con la base y la guarda en tu carpeta personal. Si ya estaba hecho, lo dice y no toca nada. Si otras computadoras se conectan a esta base, cada una necesita una copia de ese archivo (ver `BBDD_LEEME.md`, sección 6).
+3. Aplicá, en orden, las actualizaciones de la base que todavía no tengas, hasta la que indica la nota de la versión. Para saber cuál fue la última aplicada:
    ```
    sudo mysql gbpublisher -e "SELECT parche FROM esquema_version ORDER BY aplicado_en DESC LIMIT 1;"
    ```
    Si dice `actualizacion-1.31.0`, empezás por `actualizar-esquema-1.32.0.sh`.
-3. Abrí un proyecto y controlá la integridad del sistema, como en el Paso 5.
+4. Abrí un proyecto y controlá la integridad del sistema, como en el Paso 5.
 
 ---
 

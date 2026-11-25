@@ -4997,7 +4997,7 @@ LA 1.20.0 Y LA 1.21.0
 
 BASELINE 2.0.0 (20/11/2026, SC-102). Las cinco VIEW viajan en el baseline: `generar-baseline.sh` vuelca la estructura de la base entera, vistas incluidas; enumera `BASE TABLE` solo para contar y para separar las semillas. Medido al cargarlo: las cinco vistas, iguales a las de la base de origen. `url_compra` NO se retiró en la 2.0.0: la nombra `v_web_libro`, que lee gbWeb, y gbWeb no se revisó en este lote.
 
-**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170,vinculo:SC-76,vinculo:SC-53,vinculo:RC-GM-13,apoya:GV-173,apoya:GV-176,apoya:GV-177,vinculo:SC-83,vinculo:SC-85,vinculo:SC-102
+**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170,vinculo:SC-76,vinculo:SC-53,vinculo:RC-GM-13,apoya:GV-173,apoya:GV-176,apoya:GV-177,vinculo:SC-83,vinculo:SC-85,vinculo:SC-102,vinculo:SC-106
 
 **PENDIENTE:** Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3). Las hojas DocBook y EPUB del libro todavía no usan las traducciones nuevas del resumen y de las palabras clave. Retirar `url_compra` de `libros_md` y de `v_web_libro` junto con una revisión de gbWeb: no entró en el baseline 2.0.0.
 
@@ -5537,9 +5537,9 @@ VNU SE CONGELA (18/11/2026). El validador de HTML, que ya usaban los dos HTML (`
 
 PROBADO en el contenedor (Ubuntu 24.04, Java 21): instalación desde cero, un jar de otra versión reemplazado, el control como usuario común, y `requerir_vnu` con y sin el jar.
 
-**Relaciones:** apoya:GV-206,apoya:GV-207,apoya:GV-208,vinculo:GV-209,vinculo:SC-52,vinculo:SC-53,vinculo:SC-11,vinculo:GV-42
+**Relaciones:** apoya:GV-206,apoya:GV-207,apoya:GV-208,vinculo:GV-209,vinculo:SC-52,vinculo:SC-53,vinculo:SC-11,vinculo:GV-42,vinculo:SC-107
 
-**PENDIENTE:** El instalador de la base (instalar-gbpublisher.sh), con la lógica acordada: después del .deb, usa comun.sh; instala MySQL si no está y frena si encuentra MariaDB (GV-209); sin base existente la crea sin preguntar y la confirmación queda para cuando ya existe una. La política de polkit (GV-206).
+**PENDIENTE:** Adaptar engine/integridad.sh para que el instalador lo llame sin un proyecto abierto (SC-107). La política de polkit (GV-206).
 
 ### SC-96 — La salida ODT se retira, en revistas y en libros
 
@@ -5790,7 +5790,9 @@ PROBADO en el contenedor (MariaDB 10.11, gbc3 y gbx3 3.19), sobre una base con u
 
 PROBADO EN MINT por Alberto (19/11/2026, MySQL 8): sin la 1.34.0, la aplicación avisó al arrancar con el mensaje de mysqldump («SHOW VIEW command denied … v_web_coleccion (1142)») y no escribió el archivo del día. Con la 1.34.0 aplicada, el respaldo del día quedó completo («-- Dump completed») y con permisos 600. Los respaldos de Mint estaban cortados desde el 2/11/2026; se rescató con un respaldo manual de la cuenta de administración.
 
-**Relaciones:** apoya:GV-214,vinculo:SC-22,vinculo:SC-81,vinculo:GV-67
+DESDE SC-106 (25/11/2026). La credencial ya no se escribe en un temporal. `mysqldump` recibe el archivo de conexión del usuario, `~/.gbpublisher/conexion.conf` (600), con `--defaults-extra-file`, y de ahí salen el usuario y la contraseña. Sin ese archivo no se respalda y no se avisa: el aviso lo da el inicio de sesión.
+
+**Relaciones:** apoya:GV-214,vinculo:SC-22,vinculo:SC-81,vinculo:GV-67,vinculo:SC-106
 
 ### SC-102 — La bibliografía en entrada y pares campo/valor: bibtex, bibtex_campo y el catálogo de campos de biblatex (actualización y baseline 2.0.0)
 
@@ -6009,6 +6011,180 @@ De `FAnalizarDOI`: tres `Shell "curl …"` con el DOI entre comillas simples, `P
 Probado por Alberto en Mint (22/11/2026): los tres modos a mano contra los servicios reales; en la aplicación, «Analizar DOI» con y sin proyecto, el clic en una URL, el cierre bloqueado durante la consulta, los dos botones de Crossref y «Aplicar»; `m_DOI`, `m_Orcid` y el aviso legal.
 
 **Relaciones:** vinculo:SC-13,vinculo:SC-53,vinculo:GV-06,vinculo:GV-20,vinculo:GV-43,vinculo:GV-98,vinculo:SC-95,apoya:GV-221
+
+### SC-106 — La credencial de app_user sale del código: ~/.gbpublisher/conexion.conf por usuario, configurar-conexion.sh y sin contraseña de respaldo
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / Gambas 3.19 (gbs3, gbc3; contenedor Ubuntu 24.04) / bash / Linux Mint 22, Gambas 3.22.2, pkexec (25/11/2026) · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 25/11/2026). Hasta acá la contraseña de `app_user` era la misma en todas las instalaciones y estaba escrita en cinco lugares del código público: `m_ConexionBD` (ConexionAbierta, SondearEstadoConexion, AbrirConexionSondeo), `FMain.RespaldarBaseDatos` y `FSysAdmin.ConectarMySQL`, más `instalar-gbpublisher.sh`. Pasa a un archivo de configuración. Es requisito del instalador (SC-107).
+
+EL ARCHIVO
+
+- **Uno por usuario de la computadora:** `~/.gbpublisher/conexion.conf`, permisos 600. No se eligió `/etc/gbpublisher` con un grupo porque quien entra a un grupo tiene que cerrar sesión y volver a entrar antes de usarlo: para el usuario de gbpublisher es una trampa.
+- **Aparte de `gbpublisher.conf`.** Ese archivo de preferencias lo reescribe la aplicación con `Settings`, y no se midió si conserva los permisos 600. A este, la aplicación solo lo lee.
+- **El formato es un archivo de opciones de MySQL, el modelo de gbWeb (SC-81):** `[client]` con `user`, `password` y `host`; `[mysql]` con `database`.
+  - `database` no va en `[client]` porque `mysqldump` la rechaza (GV-222).
+  - Lo leen la aplicación (`gb.settings`, GV-223), `mysql` y `mysqldump` (`--defaults-extra-file`).
+  - El `host` lo usan las herramientas de MySQL. La aplicación sigue usando la IP que se elige al iniciar sesión.
+
+LA APLICACIÓN
+
+- **`m_ConexionBD.PrepararConexion(hConn, sHost)` es el único lugar que arma la credencial.** Lee `client/user` y `client/password` y configura la conexión. La usan los cinco lugares.
+  - No usa `mConn`: `FSysAdmin` la llama sin sesión (GV-151).
+  - Si falla, el motivo queda en `ErrorCredenciales`.
+- **Sin contraseña de respaldo en el código (decisión de Alberto):** sin archivo no hay conexión. El inicio de sesión y `FSysAdmin` dicen qué hacer: ejecutar el instalador o `configurar-conexion.sh`.
+- **El respaldo diario (SC-101)** le pasa a `mysqldump` el propio `conexion.conf` con `--defaults-extra-file`. Ya no escribe una copia temporal de la contraseña, y sigue sin contraseña en la línea de comandos. Sin archivo no respalda y no avisa: el aviso lo da el inicio de sesión.
+
+configurar-conexion.sh (RAÍZ DEL REPOSITORIO)
+
+Sigue el modelo de `crear-cuenta-gbweb.sh` (SC-81).
+
+- **Corre sin sudo:** el archivo es del usuario. Con sudo se niega.
+- **La parte de MySQL corre como root, con `pkexec`** (ventana gráfica, GV-206), y con `sudo` si no hay sesión gráfica. `--con-sudo` fuerza sudo; lo usa `instalar-gbpublisher.sh`, que ya lo tiene.
+  - La parte de root es el mismo script con `--root <archivo>`.
+  - pkexec limpia el entorno, así que la parte de root no toca `~/.gbpublisher`.
+- **Decide por el estado real.** Si el archivo existe y abre una sesión, no toca nada. Si no:
+  1. genera una contraseña;
+  2. la pone en TODAS las cuentas `app_user` del servidor (`localhost` y los rangos de red);
+  3. escribe el archivo entero, con permisos 600, y lo mueve a su lugar;
+  4. verifica que abre la sesión.
+- **La contraseña:** 28 letras y cifras al azar, la primera una letra, más el sufijo fijo `Gb7_` (mayúscula, minúscula, cifra y símbolo, por si el servidor tiene `validate_password`).
+  - No lleva `#`, que en un archivo de opciones empieza un comentario, ni comillas.
+  - Nunca va en una línea de comandos: viaja a la parte de root en un archivo temporal 600 y a MySQL por la entrada estándar. No se usa la entrada estándar de `pkexec` porque no está verificada (GV-206 verificó solo la salida).
+- **Generación de la contraseña.** Se hace con `head -c 4096 /dev/urandom | tr -dc 'A-Za-z0-9'`, no con `tr -dc … </dev/urandom | head -c N`. En la segunda forma `tr` muere por SIGPIPE, y bajo `set -e` y `pipefail` eso corta el script: medido, salida 141 en `instalar-gbpublisher.sh`.
+- **Salida:** 0 en regla, 1 algo quedó sin resolver.
+- **Atención:** cambiar la contraseña corta a toda máquina que se conecte con la vieja. Cada cliente necesita una copia del archivo, con `host` = la IP del servidor (`BBDD_LEEME.md` §6). El caso de varias máquinas (Eduvim) queda para después de hablar con su administrador.
+
+instalar-gbpublisher.sh
+
+- Crea las cuentas con una contraseña provisoria al azar, que va por la entrada estándar.
+- Al final llama a `configurar-conexion.sh --con-sudo`, que pone la definitiva y escribe el archivo. Si ese paso falla, avisa: la base quedó instalada, pero falta el archivo.
+
+PASAR UNA INSTALACIÓN EXISTENTE
+
+1. Instalar el `.deb` de la primera versión que lee el archivo.
+2. Una vez, sin sudo, antes de abrir la aplicación: `bash configurar-conexion.sh`. Si no se hace, la aplicación no conecta y dice qué hacer.
+
+`LEEME.md` lo pide en «Actualizar una instalación existente». El instalador (SC-107) lo hará solo.
+
+PROBADO (25/11/2026, contenedor Ubuntu 24.04, MySQL 8.0.46, Gambas 3.19 con gb.db y gb.qt5, un usuario común con sudo; sin pkexec, que no tiene agente de polkit):
+
+- **`configurar-conexion.sh`:**
+  - creación desde cero, con dos cuentas (`localhost` y `10.0.%.%`, las dos con la clave nueva);
+  - segunda corrida, que no toca nada;
+  - archivo con la clave equivocada, que se rehace;
+  - sin `app_user`, que da un error claro y salida 1;
+  - con sudo, que se niega;
+  - tres claves generadas, de 32 caracteres cada una.
+- **`mysqldump`** con el archivo, hasta «Dump completed».
+- **`instalar-gbpublisher.sh`** completo, como usuario común, con el archivo escrito al final.
+- **Gambas:** `gbs3` con `gb.settings` y `gb.db`, que lee el archivo, abre la conexión y consulta.
+- **El proyecto actual compila** con los tres archivos cambiados.
+
+PROBADO EN MINT (Alberto, 25/11/2026; Linux Mint 22, Gambas 3.22.2, MySQL 8.0):
+
+- **`configurar-conexion.sh`** desde una terminal, con pkexec: se abrió la ventana; la salida de la parte de root se vio en la terminal; se cambió la clave de `app_user@localhost` y se escribió el archivo. La segunda corrida dijo «en regla» y no tocó nada.
+- **La aplicación con el archivo:** el inicio de sesión a 127.0.0.1, el semáforo en verde (SondearEstadoConexion) y FSysAdmin («Acceso concedido como SUPERADMINISTRADOR»).
+- **El respaldo diario:** borrado el del día y reabierta la aplicación, se recreó `gbpublisher_261125.sql` (2,6 MB). La función solo deja el archivo si salió completo.
+- **Sin el archivo:** el inicio de sesión no conecta, muestra la ruta completa y la indicación de ejecutar `configurar-conexion.sh`, y el semáforo queda en rojo.
+
+AJUSTE DEL MISMO DÍA. El aviso de copiar el archivo a otras máquinas sale solo si el servidor tiene cuentas `app_user` de red, además de la de `localhost`. Con solo `localhost` era ruido. La parte de root lo informa con la salida 4 (0 = solo `localhost`). Probado en el contenedor con y sin una cuenta de red. Probado también el caso de un servidor apagado: la salida es 3, con el mensaje de MySQL.
+
+**Relaciones:** vinculo:SC-81,vinculo:SC-101,apoya:GV-222,apoya:GV-223,vinculo:GV-151,vinculo:GV-206,vinculo:SC-107
+
+**PENDIENTE:** Probar en Mint: las notas, que abren su propia conexión (AbrirConexionSondeo), y cerrar la ventana de pkexec con la X (código 126).
+
+### SC-107 — El instalador: instalador.sh versionado contra el .deb, sin sudo y con pkexec, para usuarios sin formación técnica que instalan solos
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Linux Mint 22 (Ubuntu 24.04) y 23 (Ubuntu 26.04) / openSUSE Build Service home:gambas:stable / MySQL 8.0 y 8.4 / pkexec · **Verificado:** 2026-11
+
+DECISIONES CERRADAS (Alberto, del 20/11 al 25/11/2026), después de discutir las fricciones. Falta implementarlo.
+
+PARA QUIÉN
+
+- Editores y estudiantes de edición sin formación técnica, que instalan solos y de forma asincrónica:
+  - los alumnos de los cursos virtuales de Alberto, que reciben como consigna descargar el instalador;
+  - unos 150 editores de la REUN, de todo el país.
+- Cada uno en su máquina o en una de pruebas, con su base local. Las editoriales consultadas prefieren evaluar así antes de pensar en la migración interna.
+- Fuera de la primera versión queda el modo compartido: un servidor con varios usuarios o puestos (Eduvim, con escritorio remoto y VPN). Se documenta aparte, después de que Alberto hable con su administrador.
+
+CÓMO LLEGA Y CÓMO SE EJECUTA
+
+- **Un instalador por release, versionado contra el `.deb`:** `instalador-X.Y.Z.sh`, publicado como archivo de la release.
+  - Lleva escritas su versión, las direcciones de esa etiqueta y la huella del `.deb`, que verifica antes de instalar.
+  - No consulta la API de GitHub.
+  - Se genera desde una plantilla, como el baseline: no se edita a mano.
+  - Un error del propio instalador se corrige con una revisión (`instalador-X.Y.Z-rN.sh`), nunca reemplazando el archivo publicado.
+  - Un instalador más viejo que lo instalado frena: nunca baja de versión.
+- **La línea para pegar:** `curl -fsSLo instalador.sh <URL> && bash instalador.sh`. No `curl … | bash`: en esa forma la entrada del script es la descarga y las preguntas leerían el propio script. El archivo queda y se puede volver a ejecutar.
+- **Sin sudo:** la contraseña de administrador se pide una vez, con `pkexec` (ventana gráfica, GV-206).
+- **`LEER-INSTALADOR.md`, en el repositorio y de la misma etiqueta,** explica qué hace el instalador y qué se decidió. Lo primero que pregunta el instalador es si se leyó. Con «no», cancela, pide que se lea y da la dirección. El `README.md` dice, arriba, que la instalación se hace con el instalador.
+- **Mensajes simples y en color,** con el vocabulario de la consola de FMain. Antes de cada decisión va un texto que la explica. Las decisiones se reducen a lo inevitable: lo que está decidido no se pregunta.
+
+LO QUE HACE
+
+1. **Controles previos, sin tocar nada:**
+   - sistema (Mint 22; Mint 23 cuando esté probado);
+   - espacio en disco;
+   - conexión y respuesta de cada sitio de descarga;
+   - MariaDB, que frena (GV-209).
+
+   Una sesión que no es X11 no frena: la aplicación ya lo avisa al arrancar.
+2. **Detectar el caso:**
+   - instalación nueva;
+   - actualización;
+   - reinstalación (sin aplicación y con base);
+   - instalador más viejo, que frena.
+3. **Gambas:** el repositorio `home:gambas:stable` de openSUSE.
+   - Medido el 20/11/2026: existe para `xUbuntu_24.04` y `xUbuntu_26.04` (200). No hay repositorio por versión `3.22` para ninguna de las dos bases (404).
+   - Gambas sigue al canal estable. El `.deb` declara la versión mínima.
+   - Si hay un Gambas de Mint u otro repositorio de Gambas, se reemplaza: no se mezclan.
+4. **El `.deb`:** descarga, huella e instalación con `apt install ./paquete.deb`. TeX Live es el paso largo y se muestra el progreso.
+5. **Las herramientas de `/opt`:** se delegan en `engine/integridad.sh` del `.deb` (SC-95), que hay que adaptar para que corra sin un proyecto abierto. No hay una segunda lista.
+6. **La base:**
+   - en una instalación nueva: MySQL si falta, el baseline y `app_user` solo local;
+   - en una actualización: un solo respaldo y los scripts de esquema en un modo no interactivo.
+
+   La credencial, con `configurar-conexion.sh` (SC-106).
+7. **Control final:** conexión e integridad.
+8. **Cierre:** qué se hizo, dónde quedó el registro y «Pulse Enter para cerrar».
+
+REGISTRO Y SOPORTE
+
+- **Registro:** cada corrida escribe `~/gbpublisher-instalacion.log`.
+- **Soporte:** un formulario de issues en GitHub (`.github/ISSUE_TEMPLATE`). Tener cuenta de GitHub es condición (decisión de Alberto). Ante un error, el instalador da el enlace al formulario ya cargado (versión, sistema y paso) y pide adjuntar el registro.
+- **Cómo crear la cuenta y reportar** lo explica un artículo del blog de Estudio 2A, al que remite `LEER-INSTALADOR.md`.
+
+MINT 23
+
+Sale en diciembre de 2026, sobre Ubuntu 26.04.
+
+- **MySQL 8.4:** Ubuntu 26.04 trae la serie 8.4 (`mysql-server` 8.4.8 en la base).
+  - Medido en el contenedor: `app_user` ya usa `caching_sha2_password`, el método que la 8.4 usa por defecto.
+  - Las 82 claves foráneas del esquema 2.0.0 apuntan a una clave única o primaria, que la 8.4 exige.
+  - Falta probarlo con un servidor 8.4 real.
+- **Wayland** pasa a tener soporte, y X11 sigue siendo la sesión por defecto según lo anunciado.
+- **Una tanda de pruebas aparte,** en una máquina virtual:
+  - Gambas `stable`;
+  - MySQL 8.4: el baseline, la cadena y el paso de una base 8.0 a 8.4;
+  - las salidas;
+  - el cambio de base en la misma máquina: corregir la línea del repositorio de Gambas y verificar la base.
+
+  Cada instalador declara para qué bases fue probado.
+
+TeX Live sigue sin congelarse (SC-95): según la experiencia de Alberto, no rompe hacia atrás.
+
+**Relaciones:** vinculo:SC-95,vinculo:SC-106,vinculo:SC-22,vinculo:GV-206,vinculo:GV-209,vinculo:SC-81
+
+**PENDIENTE:** Implementar, en este orden:
+1. La plantilla del instalador y su generador (versión y huella del .deb).
+2. engine/integridad.sh sin proyecto abierto.
+3. El modo no interactivo de los scripts de esquema.
+4. LEER-INSTALADOR.md y la sección del README.
+5. El formulario de issues.
+6. El artículo del blog sobre la cuenta de GitHub.
+
+Después: la tanda de Mint 23 y el modo compartido (Eduvim).
 
 ---
 
@@ -9879,7 +10055,7 @@ PATRÓN: toda función que llama `FSysAdmin` recibe la conexión como parámetro
 
 EN EL PROYECTO: `m_Revistas`, `m_Vocabularios`, `FPlantillasResumen` (`hConn` del llamador); `m_Licencias.LlenarCombo`, `CompletarUrl` y `m_Idiomas.ListaValida` con `hConn` opcional.
 
-**Relaciones:** apoya:SC-71
+**Relaciones:** apoya:SC-71,apoya:SC-106
 
 ### GV-152 — MySQL 8: utf8mb4_unicode_ci iguala ñ con n y las vocales con y sin tilde
 
@@ -10745,7 +10921,7 @@ pkexec limpia el entorno: el programa no recibe el HOME del usuario. Lo que corr
 
 La ventana describe la acción como la ejecución de `/bin/bash` como superusuario. El texto se cambia con una política de polkit propia, no probada.
 
-**Relaciones:** apoya:SC-95,vinculo:GV-42,vinculo:SC-53
+**Relaciones:** apoya:SC-95,vinculo:GV-42,vinculo:SC-53,apoya:SC-106,apoya:SC-107
 
 **PENDIENTE:** Una política de polkit propia, para que la ventana describa la acción en castellano y no como la ejecución de /bin/bash.
 
@@ -10798,7 +10974,7 @@ Medido el 18/11/2026 en Linux Mint 22 con `apt-cache show`.
 
 Consecuencia para un instalador: si encuentra MariaDB, tiene que frenar, no instalar MySQL encima. Para detectarlo no alcanza el nombre del paquete (un MySQL de los repositorios de Oracle se llama distinto): `mysqld --version` dice «MariaDB» en MariaDB.
 
-**Relaciones:** vinculo:SC-95
+**Relaciones:** vinculo:SC-95,apoya:SC-107
 
 ### GV-210 — gbc3 compila la llamada a una función o propiedad que no existe en otro módulo o clase, aun con la variable tipada
 
@@ -11021,6 +11197,53 @@ MEDIDO CON 10.1108/jd-12-2013-0166: Crossref, 46 citas; OpenCitations, 57. La di
 **Relaciones:** apoya:SC-105
 
 **PENDIENTE:** Ver en qué forma llega el total de OpenAIRE (número o {"$": N}): el script acepta las dos. La API de búsqueda convive con la del grafo (api.openaire.eu/graph); si se retira, migrar a /graph con el filtro por pid.
+
+### GV-222 — mysqldump rechaza database en la sección [client] de un archivo de opciones: «unknown variable 'database=...'»; en [mysql] la usa solo el cliente mysql
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 (mysql, mysqldump) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido el 25/11/2026 con MySQL 8.0.46 en el contenedor.
+
+Con un archivo de opciones que tiene `database=gbpublisher` en `[client]`, `mysqldump --defaults-extra-file=archivo … gbpublisher` termina con `mysqldump: [ERROR] unknown variable 'database=gbpublisher'.` y no vuelca nada.
+
+Con `database` en una sección `[mysql]` aparte:
+- `mysqldump` vuelca hasta «Dump completed»;
+- `mysql --defaults-extra-file=archivo` entra a esa base (`SELECT DATABASE()` da `gbpublisher`).
+
+`[client]` la leen todos los programas del cliente, y cada uno rechaza las opciones que no conoce. `[mysql]` la lee solo el cliente `mysql`.
+
+CONSECUENCIA. Un archivo de conexión que sirva a la vez para `mysql` y para `mysqldump` lleva `database` en `[mysql]` (SC-106). El `~/.gbweb/conexion.conf` de gbWeb la tiene en `[client]`: sirve porque gbWeb solo usa `mysql`.
+
+**Relaciones:** apoya:SC-106,vinculo:SC-81,vinculo:SC-101
+
+### GV-223 — gb.settings lee un archivo de opciones de MySQL tal cual: [client] user=… se lee como Settings["client/user"], texto, sin comillas
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 (gbs3, gb.settings, gb.db) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido el 25/11/2026 con `gbs3` 3.19.0 en el contenedor.
+
+Archivo:
+
+    [client]
+    user=app_user
+    password=Ab3kXy9Qz7Lm2Np8Rt5Vw1Hj6Gd4Fs0Aa1!
+    host=localhost
+
+    [mysql]
+    database=gbpublisher
+
+- `New Settings(ruta)` lo abre.
+- `Settings["client/user"]` da `app_user`, y `Settings["client/password"]` da la contraseña exacta, con el símbolo final.
+- `TypeOf` da 9 (String): los valores sin comillas se leen como texto.
+- `Settings["client/database"]` da vacío: está en `[mysql]`.
+
+Con esa credencial, una `Connection` de `gb.db` a `localhost` abre y consulta.
+
+LÍMITE. No se probó un valor que parezca número o booleano (por ejemplo, una contraseña solo de cifras): Settings podría convertirlo. Por eso la contraseña de SC-106 empieza con una letra y termina con un sufijo fijo con símbolo.
+
+**Relaciones:** apoya:SC-106
+
+**PENDIENTE:** Confirmar en 3.22 (Mint) con el mismo script.
 
 ---
 

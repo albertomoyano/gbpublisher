@@ -9,8 +9,14 @@
 #               -r RANGO  Rango de red de los clientes, para instalaciones
 #                         cliente/servidor. Ejemplos: 192.168.128.%  10.0.%.%
 #                         Si se omite, el script pregunta.
-# Requisitos: MySQL/MariaDB instalado y en ejecución; permisos sudo;
-#             el archivo 'gbpublisher-baseline-X.Y.Z.sql' en esta misma carpeta.
+# Requisitos: MySQL instalado y en ejecución; permisos sudo; en esta misma
+#             carpeta, el archivo 'gbpublisher-baseline-X.Y.Z.sql' y
+#             configurar-conexion.sh.
+# Credencial: la contraseña de app_user no está escrita en ningún lado del
+#             repositorio (SC-106). Este script crea las cuentas con una
+#             contraseña provisoria al azar y al final llama a
+#             configurar-conexion.sh, que pone la definitiva y escribe el
+#             archivo de conexión del usuario (~/.gbpublisher/conexion.conf).
 # ============================================
 
 set -euo pipefail
@@ -18,7 +24,14 @@ set -euo pipefail
 # --- 0. CONFIGURACIÓN ---
 DB="gbpublisher"
 DB_USER="app_user"
-DB_PASS="AppUser2024!"
+# PROVISORIA: VIVE SOLO MIENTRAS CORRE EL SCRIPT. configurar-conexion.sh LA
+# REEMPLAZA AL FINAL (SC-106). VA A MySQL POR LA ENTRADA ESTÁNDAR
+# head LEE UNA CANTIDAD FIJA Y tr LA FILTRA ENTERA: CON «tr </dev/urandom |
+# head», tr MUERE POR SIGPIPE Y, BAJO set -e Y pipefail, CORTA EL SCRIPT
+# (MEDIDO: SALIDA 141)
+ALEA="$(head -c 4096 /dev/urandom | tr -dc 'A-Za-z0-9')"
+LETRAS="${ALEA//[0-9]/}"
+DB_PASS="${LETRAS:0:1}${ALEA:0:27}Gb7_"
 PATRON_BASELINE="gbpublisher-baseline-*.sql"
 
 # VALORES ESPERADOS EN UN BASELINE ÍNTEGRO. SI LA IMPORTACIÓN NO LLEGA A
@@ -117,7 +130,7 @@ fi
 if ! sudo mysql -e "SELECT 1;" >/dev/null 2>&1; then
   error "No se pudo conectar al servidor de base de datos."
   error "Comprobá que el servicio esté activo, por ejemplo con:"
-  error "    sudo systemctl status mariadb"
+  error "    sudo systemctl status mysql"
   exit 1
 fi
 ok "Todo listo para instalar."
@@ -247,6 +260,17 @@ if [ -n "$RANGO_RED" ]; then
     warn "y después reiniciar el servicio:"
     warn "    sudo systemctl restart mysql"
   fi
+fi
+
+# --- 9 BIS. LA CREDENCIAL DEFINITIVA Y EL ARCHIVO DE CONEXIÓN ---
+# configurar-conexion.sh CORRE COMO EL USUARIO (EL ARCHIVO ES SUYO) Y USA EL
+# sudo QUE ESTE SCRIPT YA OBTUVO. SIN ESTE PASO LA APLICACIÓN NO SE CONECTA
+echo
+info "Creando el archivo de conexión de tu usuario..."
+if ! bash "${DIR_SCRIPT}/configurar-conexion.sh" --con-sudo; then
+  error "La base quedó instalada, pero falta el archivo de conexión."
+  error "Ejecutá:  bash ${DIR_SCRIPT}/configurar-conexion.sh"
+  exit 1
 fi
 
 # --- 10. CIERRE ---

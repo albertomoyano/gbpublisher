@@ -61,6 +61,27 @@ una cuarta donde se usa gbWeb:
 sola por instalación, con su clave propia. Es la que usa gbpublisher para
 abrir la conexión. El usuario final nunca la ve ni la escribe.
 
+Su clave no está escrita en el código ni en el repositorio. Cada
+instalación genera la suya, al azar, y la guarda en el archivo de conexión
+del usuario de la computadora:
+
+```
+~/.gbpublisher/conexion.conf
+```
+
+Es un archivo de opciones de MySQL (`[client]` con `user`, `password` y
+`host`; `[mysql]` con `database`), con permisos 600: solo lo lee su dueño.
+Lo leen la aplicación, `mysql` y `mysqldump` (`--defaults-extra-file`).
+`database` va en `[mysql]` y no en `[client]` porque `mysqldump` la rechaza.
+Sin ese archivo, la aplicación no se conecta y dice qué hacer.
+
+Lo escribe `configurar-conexion.sh`, que se corre **sin sudo** (el archivo es
+del usuario) y pide la contraseña de administrador con una ventana gráfica
+solo para cambiar la clave en MySQL. Decide por el estado real: si el archivo
+existe y abre una sesión, no toca nada; si no, genera una clave nueva, la
+pone en todas las cuentas `app_user` del servidor y escribe el archivo.
+`instalar-gbpublisher.sh` lo llama al final.
+
 **Los usuarios de gbpublisher.** Viven en la tabla `usuarios` de la base.
 Se dan de alta desde el formulario de administración de la aplicación. **No
 son cuentas de MySQL**: crear un usuario nuevo no requiere ninguna acción
@@ -377,13 +398,23 @@ al servidor de base de datos. Se corrige en la configuración de MySQL
 (`bind-address = 0.0.0.0`) y reiniciando el servicio. El asistente de
 instalación avisa cuando detecta esta situación.
 
-**El puerto no debe quedar expuesto fuera del perímetro.** La aplicación se
-conecta con una cuenta de base de datos cuyas credenciales son conocidas.
-Eso significa que el control de acceso efectivo a los datos editoriales es
-**el perímetro de red**: red interna de la institución, o VPN. Si el
+**El puerto no debe quedar expuesto fuera del perímetro.** Hasta la
+versión que introdujo el archivo de conexión, la clave de `app_user` era la
+misma en todas las instalaciones y estaba publicada en el código. Desde
+entonces cada instalación tiene la suya, pero el perímetro de red sigue
+siendo la primera barrera: red interna de la institución, o VPN. Si el
 servidor queda alcanzable desde una red más amplia, corresponde filtrar el
 puerto 3306 con el cortafuegos. Por la misma razón, el asistente pide un
 rango de red concreto en lugar de habilitar cualquier origen.
+
+**Cada máquina cliente necesita su archivo de conexión.** En una
+instalación cliente/servidor, `configurar-conexion.sh` se corre en el
+servidor: cambia la clave de todas las cuentas `app_user` y escribe el
+archivo del usuario del servidor. Cada máquina cliente necesita una copia
+de ese archivo en `~/.gbpublisher/conexion.conf`, con permisos 600 y
+`host` cambiado a la IP del servidor. Cada vez que el script cambia la
+clave, hay que volver a copiarlo: las máquinas con el archivo viejo dejan
+de conectarse.
 
 ---
 
@@ -393,11 +424,12 @@ rango de red concreto en lugar de habilitar cualquier origen.
 |---|---|---|
 | `gbpublisher-baseline-X.Y.Z.sql` | Quien instala | Base inicial, punto de partida de la cadena |
 | `instalar-gbpublisher.sh` | Quien instala | Asistente de instalación limpia |
+| `configurar-conexion.sh` | Quien instala o actualiza | Clave de `app_user` y archivo de conexión del usuario (sin sudo) |
 | `actualizar-esquema-X.Y.Z.sh` | Quien instala o actualiza | Lleva la base a la versión siguiente |
 | `generar-baseline.sh` | Mantenimiento | Regenera el baseline desde una base en el nivel que declara |
 
-El baseline y el asistente viajan juntos: el asistente busca el archivo en
-su misma carpeta. El generador es herramienta de mantenimiento y no se
+El baseline, el asistente y `configurar-conexion.sh` viajan juntos: el
+asistente los busca en su misma carpeta. El generador es herramienta de mantenimiento y no se
 distribuye a las instalaciones.
 
 ---

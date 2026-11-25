@@ -24,6 +24,82 @@ Public mConn As Connection        ' OBJETO DE CONEXIÓN REUTILIZADO GLOBALMENTE
 Public usuarioActual As String    ' USUARIO LOGUEADO ACTUALMENTE
 Public ipServidorActual As String   ' IP CON LA QUE SE ABRIÓ mConn — PARA SONDEO DEL SEMÁFORO
 Public ErrorConexionSondeo As String   ' ÚLTIMO FALLO DE AbrirConexionSondeo (LO MUESTRA m_Notas)
+Public ErrorCredenciales As String   ' POR QUÉ NO SE PUDO PREPARAR LA ÚLTIMA CONEXIÓN (PrepararConexion)
+
+' LA CREDENCIAL DE app_user VIVE EN UN ARCHIVO DE OPCIONES DE MySQL DEL
+' USUARIO, NO EN EL CÓDIGO (SC-106). LO ESCRIBE configurar-conexion.sh
+Public Const ARCHIVO_CONEXION As String = ".gbpublisher/conexion.conf"
+
+' ============================================
+' Función   : RutaConexion
+' Propósito : La ruta del archivo de conexión del usuario
+' Parámetros: (ninguno)
+' Retorna   : String — ~/.gbpublisher/conexion.conf
+' ============================================
+Public Function RutaConexion() As String
+
+  Return User.Home &/ ARCHIVO_CONEXION
+
+End
+
+' ============================================
+' Función   : PrepararConexion
+' Propósito : Configura una conexión MySQL a la base gbpublisher con la
+'             credencial del archivo de conexión ([client] user y password).
+'             Es el único lugar que arma la credencial: la usan
+'             ConexionAbierta, las dos sondas, FSysAdmin y el respaldo diario
+' Parámetros: hConn As Connection — la conexión a configurar (sin abrir)
+'             sHost As String — servidor: la IP elegida al iniciar sesión
+' Retorna   : Boolean — False si el archivo falta o no tiene la credencial;
+'             el motivo queda en ErrorCredenciales
+' Nota      : NO USA mConn: FSysAdmin LA LLAMA SIN SESIÓN (GV-151). NO HAY
+'             CONTRASEÑA DE RESPALDO EN EL CÓDIGO (DECISIÓN DE ALBERTO,
+'             25/11/2026): SIN ARCHIVO, NO HAY CONEXIÓN. gb.settings LEE EL
+'             FORMATO DE OPCIONES DE MySQL TAL CUAL (GV-223)
+' ============================================
+Public Function PrepararConexion(hConn As Connection, sHost As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim hArchivo As Settings
+  Dim sUsuario As String
+  Dim sClave As String
+
+  ErrorCredenciales = ""
+
+  ' --- 2. EL ARCHIVO TIENE QUE EXISTIR ---
+  If Not Exist(RutaConexion()) Then
+    ErrorCredenciales = "Falta el archivo de conexión con la base de datos:" & gb.NewLine &
+      RutaConexion() & gb.NewLine & gb.NewLine &
+      "Lo crea el instalador. Si gbpublisher ya estaba instalado, ejecutá en una terminal, " &
+      "desde la carpeta de gbpublisher:" & gb.NewLine & gb.NewLine &
+      "bash configurar-conexion.sh"
+    Return False
+  Endif
+
+  ' --- 3. LA CREDENCIAL ---
+  Try hArchivo = New Settings(RutaConexion())
+  If Error Then
+    ErrorCredenciales = "No se pudo leer " & RutaConexion() & ": " & Error.Text
+    Return False
+  Endif
+  sUsuario = Trim(CStr(hArchivo["client/user", ""]))
+  sClave = CStr(hArchivo["client/password", ""])
+  If sUsuario = "" Or sClave = "" Then
+    ErrorCredenciales = "El archivo " & RutaConexion() & " no tiene el usuario o la contraseña " &
+      "([client] user y password). Ejecutá configurar-conexion.sh para rehacerlo."
+    Return False
+  Endif
+
+  ' --- 4. LA CONEXIÓN ---
+  hConn.Type = "mysql"
+  hConn.Host = sHost
+  hConn.Port = 3306
+  hConn.Name = "gbpublisher"
+  hConn.User = sUsuario
+  hConn.Password = sClave
+  Return True
+
+End
 
 ' ==============================================================================
 ' Función: ConexionAbierta(ip, usuario, claveEncriptada) As Integer
@@ -69,14 +145,13 @@ Public Function ConexionAbierta(ip As String, usuario As String, claveEncriptada
   Dim sSQL As String
   Dim hResultado As Result
 
-  ' CREAR Y CONFIGURAR CONEXIÓN MYSQL
+  ' CREAR Y CONFIGURAR CONEXIÓN MYSQL, CON LA CREDENCIAL DEL ARCHIVO (SC-106)
   mConn = New Connection
-  mConn.Type = "mysql"
-  mConn.Host = ip
-  mConn.Port = 3306
-  mConn.Name = "gbpublisher"
-  mConn.User = "app_user"
-  mConn.Password = "AppUser2024!"
+  If Not PrepararConexion(mConn, ip) Then
+    m_Sonido.sonar("Error")
+    Message.Error(ErrorCredenciales)
+    Return 0
+  Endif
 
   ' INTENTAR ABRIR LA CONEXIÓN
   Try mConn.Open
@@ -417,16 +492,9 @@ Public Function SondearEstadoConexion() As Boolean
   ' --- 1. VALIDACIÓN: DEBE HABER IP CACHEADA ---
   If ipServidorActual = "" Then Return False
 
-  ' --- 2. CONEXIÓN DE SONDEO DESCARTABLE (MISMAS CREDENCIALES QUE mConn) ---
-  ' PENDIENTE: CUANDO app_user/PASSWORD PASEN AL ARCHIVO CONF, ACTUALIZAR
-  ' ESTE BLOQUE Y EL DE ConexionAbierta EN PARALELO (HOY DUPLICADOS).
+  ' --- 2. CONEXIÓN DE SONDEO DESCARTABLE (MISMA CREDENCIAL QUE mConn) ---
   hSonda = New Connection
-  hSonda.Type = "mysql"
-  hSonda.Host = ipServidorActual
-  hSonda.Port = 3306
-  hSonda.Name = "gbpublisher"
-  hSonda.User = "app_user"
-  hSonda.Password = "AppUser2024!"
+  If Not PrepararConexion(hSonda, ipServidorActual) Then Return False
   ' TIMEOUT ACOTADO — VERIFICADO: CORTA Open() A LOS N SEGUNDOS
   hSonda.Timeout = 3
 
@@ -458,10 +526,8 @@ End
 '             MYSQL_OPT_READ_TIMEOUT (options.h). LEÍDO EN EL FUENTE; MEDIDO
 '             EN 3.19 CON gb.db: SELECT SLEEP(5) FALLA A LOS 2,00 s CON
 '             «Lost connection», Y LA CONEXIÓN QUEDA MUERTA. UNA CLAVE MAL
-'             ESCRITA EN Options SE IGNORA SIN AVISO.
-'             PENDIENTE: CUANDO app_user/PASSWORD PASEN AL ARCHIVO CONF,
-'             ACTUALIZAR ESTE BLOQUE JUNTO CON ConexionAbierta Y
-'             SondearEstadoConexion (HOY TRIPLICADOS).
+'             ESCRITA EN Options SE IGNORA SIN AVISO. LA CREDENCIAL SALE
+'             DE PrepararConexion, COMO EN ConexionAbierta (SC-106).
 ' Parámetros: iPlazoLectura As Integer — SEGUNDOS DE ESPERA POR CONSULTA
 ' Retorna   : Connection — ABIERTA; NULL SI NO SE PUDO (EL MOTIVO QUEDA EN
 '             ErrorConexionSondeo)
@@ -479,14 +545,12 @@ Public Function AbrirConexionSondeo(iPlazoLectura As Integer) As Connection
     Return Null
   Endif
 
-  ' --- 2. CONFIGURAR (MISMAS CREDENCIALES QUE mConn) ---
+  ' --- 2. CONFIGURAR (MISMA CREDENCIAL QUE mConn) ---
   hConn = New Connection
-  hConn.Type = "mysql"
-  hConn.Host = ipServidorActual
-  hConn.Port = 3306
-  hConn.Name = "gbpublisher"
-  hConn.User = "app_user"
-  hConn.Password = "AppUser2024!"
+  If Not PrepararConexion(hConn, ipServidorActual) Then
+    ErrorConexionSondeo = ErrorCredenciales
+    Return Null
+  Endif
   hConn.Timeout = 3
   ' LAS OPCIONES SE LEEN AL ABRIR: VAN ANTES DE Open
   hConn.Options["READ_TIMEOUT"] = iPlazoLectura

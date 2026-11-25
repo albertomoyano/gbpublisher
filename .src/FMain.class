@@ -1822,13 +1822,10 @@ Public Sub RespaldarBaseDatos()
 
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim sHost As String
-  Dim sUsuario As String
-  Dim sPassword As String
   Dim sBaseDatos As String = "gbpublisher"
   Dim sRutaRespaldo As String
   Dim sArchivoRespaldo As String
   Dim sTemporal As String
-  Dim sCredenciales As String
   Dim sRegistro As String
   Dim sMotivo As String
   Dim sCola As String
@@ -1836,21 +1833,14 @@ Public Sub RespaldarBaseDatos()
   Dim hProceso As Process
   Dim hArchivo As File
 
-  ' CONFIGURAR PARÁMETROS DE CONEXIÓN
-  ' PENDIENTE: LAS CREDENCIALES SALEN DEL CÓDIGO EN EL BLOQUE DE CREDENCIALES
+  ' EL RESPALDO ES DE LA BASE LOCAL
   sHost = "localhost"
-  sUsuario = "app_user"
-  sPassword = "AppUser2024!"
 
   ' --- 2. SOLO SI LA BASE ES LOCAL Y EXISTE ---
-  If sHost <> "localhost" And sHost <> "127.0.0.1" Then Return
-
+  ' SIN ARCHIVO DE CONEXIÓN NO SE RESPALDA NI SE AVISA ACÁ: EL AVISO LO DA EL
+  ' INICIO DE SESIÓN, QUE TAMPOCO PUEDE CONECTAR (SC-106)
   hConexion = New Connection
-  hConexion.Type = "mysql"
-  hConexion.Host = sHost
-  hConexion.Login = sUsuario
-  hConexion.Password = sPassword
-  hConexion.Name = sBaseDatos
+  If Not m_ConexionBD.PrepararConexion(hConexion, sHost) Then Return
   Try hConexion.Open()
   If Error Then Return
   hConexion.Close()
@@ -1864,19 +1854,15 @@ Public Sub RespaldarBaseDatos()
   sTemporal = sArchivoRespaldo & ".parcial"
   sRegistro = Temp$("mysqldump") & ".log"
 
-  ' --- 4. LA CONTRASEÑA, EN UN ARCHIVO Y NO EN LA LÍNEA DE COMANDOS ---
-  ' EN LA LÍNEA DE COMANDOS LA VE CUALQUIER USUARIO EN LA LISTA DE PROCESOS.
-  ' Temp$ VIVE EN UNA CARPETA DEL PROCESO QUE SOLO LEE EL USUARIO, Y EL
-  ' ARCHIVO SE BORRA AL TERMINAR
-  sCredenciales = Temp$("cliente") & ".cnf"
-  Try File.Save(sCredenciales, "[client]" & gb.NewLine & "password=" & sPassword & gb.NewLine)
-  If Error Then
-    AvisarRespaldoFallido("no se pudo preparar la conexión: " & Error.Text)
-    Return
-  Endif
+  ' --- 4. LA CREDENCIAL: EL ARCHIVO DE CONEXIÓN, NO LA LÍNEA DE COMANDOS ---
+  ' EN LA LÍNEA DE COMANDOS LA VE CUALQUIER USUARIO EN LA LISTA DE PROCESOS
+  ' (SC-101). conexion.conf YA ES UN ARCHIVO DE OPCIONES DE MySQL ([client]
+  ' CON user Y password, PERMISOS 600): mysqldump LO LEE DIRECTO, SIN COPIA
+  ' TEMPORAL (SC-106)
 
   ' --- 5. mysqldump ---
-  ' --defaults-extra-file    TIENE QUE IR PRIMERO (REGLA DE mysqldump)
+  ' --defaults-extra-file    TIENE QUE IR PRIMERO (REGLA DE mysqldump); DE AHÍ
+  '                          SALEN EL USUARIO Y LA CONTRASEÑA
   ' --no-tablespaces         EVITA QUE app_user NECESITE EL PRIVILEGIO PROCESS
   ' --skip-lock-tables       EVITA QUE app_user NECESITE EL PRIVILEGIO LOCK TABLES
   ' --single-transaction     UNA FOTO CONSISTENTE DE LAS TABLAS InnoDB
@@ -1886,14 +1872,12 @@ Public Sub RespaldarBaseDatos()
   '                          CORRIENDO OTRA VEZ actualizar-esquema-1.23.0.sh
   ' --result-file Y --log-error: SIN Shell NI REDIRECCIONES; EL MOTIVO DE UN
   '                          ERROR QUEDA EN EL REGISTRO
-  Try hProceso = Exec ["mysqldump", "--defaults-extra-file=" & sCredenciales,
-    "-h", sHost, "-u", sUsuario,
+  Try hProceso = Exec ["mysqldump", "--defaults-extra-file=" & m_ConexionBD.RutaConexion(),
+    "-h", sHost,
     "--no-tablespaces", "--skip-lock-tables", "--single-transaction", "--skip-triggers",
     "--default-character-set=utf8mb4",
     "--result-file=" & sTemporal, "--log-error=" & sRegistro, sBaseDatos] Wait
   If Error Then sMotivo = "no se pudo ejecutar mysqldump: " & Error.Text
-
-  Try Kill sCredenciales
 
   ' --- 6. ¿QUEDÓ COMPLETO? ---
   ' LA SALIDA 0 NO ALCANZA SOLA: SE MIRA TAMBIÉN LA MARCA FINAL DEL ARCHIVO
