@@ -24,6 +24,12 @@ Private Const PLAZO_PDF As Float = 1200.0
 Private Const PLAZO_VALIDAR As Float = 300.0
 ' LA REVISIÓN DE VIGENCIA AL ABRIR: SOLO sha256sum Y xmllint, SIN JVM
 Private Const PLAZO_VIGENCIA As Float = 120.0
+' EL DEPÓSITO CROSSREF: ENSAMBLA EL LIBRO Y TRANSFORMA (claude/crossref-libros.md, F2)
+Private Const PLAZO_CROSSREF As Float = 600.0
+' EL VOLCADO DEL DEPÓSITO, RELATIVO AL PROYECTO, Y SU VERSIÓN: LA QUE LEE
+' engine/generar_crossref_libro.sh (VERSION_DATOS)
+Private Const VOLCADO_CROSSREF As String = "tmp/crossref-libro-datos.xml"
+Private Const VERSION_VOLCADO_CROSSREF As String = "1"
 
 ' --- PDF/A DE LIBROS ---
 ' latex/pdfa/: LOS AUXILIARES DEL PDF/A NO PISAN LOS DEL PDF ESTÁNDAR (LOS
@@ -625,24 +631,9 @@ Public Sub GenerarCanonicosTodos()
   Endif
 
   ' --- 3. CAPÍTULOS ---
-  ' LA MISMA CONDICIÓN Y EL MISMO ORDEN QUE m_XML.GenerarManifiestoLibro: «TODOS»
-  ' TIENE QUE SER LO QUE EL ENSAMBLADO VA A PEDIR, NI MÁS NI MENOS. LAS PIEZAS
-  ' SIN CUERPO LAS SALTEA LanzarCanonicos CON EL MISMO CRITERIO QUE EL MANIFIESTO
-  Try hCapitulos = m_ConexionBD.mConn.Exec(
-    "SELECT id_capitulo, nombre_archivo, tipo_capitulo, idioma_capitulo " &
-    "FROM capitulos WHERE id_libro = &1 " &
-    "AND nombre_archivo IS NOT NULL " &
-    "ORDER BY " & m_OrdenPiezas.ClausulaOrden("nombre_archivo"), iIdLibro)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudieron leer los capítulos del libro:" & gb.NewLine & Error.Text)
-    Return
-  Endif
-  If Not hCapitulos.Available Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("El libro no tiene capítulos con archivo registrado.")
-    Return
-  Endif
+  ' CapitulosParaCanonicos AVISA SI FALLA O SI NO HAY
+  hCapitulos = CapitulosParaCanonicos(iIdLibro)
+  If hCapitulos = Null Then Return
 
   ' --- 4. LANZAMIENTO E INFORME ---
   iResultado = LanzarCanonicos(hCapitulos)
@@ -1807,5 +1798,179 @@ Private Function RangoLegible(sInicio As String, sFin As String) As String
 
   If sInicio = "" And sFin = "" Then Return "(sin páginas)"
   Return sInicio & "–" & sFin
+
+End
+
+' ============================================
+' Función   : CapitulosParaCanonicos
+' Propósito : Los capítulos de «Todos los canónicos», en el orden del libro.
+'             La usan GenerarCanonicosTodos y GenerarCrossrefLibro, que
+'             regenera los mismos antes del depósito
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+' Retorna   : Result — sin recorrer, con id_capitulo, nombre_archivo,
+'             tipo_capitulo e idioma_capitulo; Null si falló o si no hay
+'             capítulos, con el aviso ya dado
+' ============================================
+Private Function CapitulosParaCanonicos(iIdLibro As Integer) As Result
+
+  Dim hCapitulos As Result
+
+  ' LA MISMA CONDICIÓN Y EL MISMO ORDEN QUE m_XML.GenerarManifiestoLibro: «TODOS»
+  ' TIENE QUE SER LO QUE EL ENSAMBLADO VA A PEDIR, NI MÁS NI MENOS. LAS PIEZAS
+  ' SIN CUERPO LAS SALTEA LanzarCanonicos CON EL MISMO CRITERIO QUE EL MANIFIESTO
+  Try hCapitulos = m_ConexionBD.mConn.Exec(
+    "SELECT id_capitulo, nombre_archivo, tipo_capitulo, idioma_capitulo " &
+    "FROM capitulos WHERE id_libro = &1 " &
+    "AND nombre_archivo IS NOT NULL " &
+    "ORDER BY " & m_OrdenPiezas.ClausulaOrden("nombre_archivo"), iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los capítulos del libro:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not hCapitulos.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El libro no tiene capítulos con archivo registrado.")
+    Return Null
+  Endif
+
+  Return hCapitulos
+
+End
+
+' ============================================
+' Función   : GenerarCrossrefLibro
+' Propósito : El depósito Crossref del libro (claude/crossref-libros.md, F2).
+'             Regenera los canónicos de los capítulos (para que lleven las
+'             páginas y los DOI de la base), escribe los insumos del libro y
+'             el volcado del encabezado, y lanza engine/generar_crossref_libro.sh,
+'             que ensambla, verifica, transforma y valida (SC-13). No deposita:
+'             deja salidas/crossref/crossref-l-{base}.xml para subirlo
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GenerarCrossrefLibro()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iIdLibro As Integer
+  Dim hCapitulos As Result
+  Dim oInsumos As CInsumosLibro
+  Dim iRespuesta As Integer
+  Dim iResultado As Integer
+  Dim sSalida As String
+
+  ' --- 2. ALERTA PREVIA ---
+  iRespuesta = Message.Question(
+    "GENERAR EL DEPÓSITO CROSSREF DEL LIBRO" & gb.NewLine & gb.NewLine &
+    "Se regeneran los canónicos de todos los capítulos, se ensambla el" & gb.NewLine &
+    "libro y se escribe el XML para subir a Crossref. Las páginas son las" & gb.NewLine &
+    "de la última composición del PDF: componé antes si cambió algo." & gb.NewLine & gb.NewLine &
+    "gbpublisher no deposita: el archivo se sube a mano.",
+    "Generar", "Cancelar")
+  If iRespuesta <> 1 Then Return
+
+  ' --- 3. PROYECTO Y LIBRO ---
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+  ' EL ID DEL PROYECTO SALE DE LA GLOBAL DE SESIÓN (RC-GM-16)
+  iIdLibro = m_XML.ObtenerIdLibro(m_InicioCierre.IdProyectoEnCurso)
+  If iIdLibro = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo resolver el libro del proyecto activo.")
+    Return
+  Endif
+
+  ' --- 4. LOS CANÓNICOS DE LOS CAPÍTULOS ---
+  ' EL DOI Y LAS PÁGINAS DE CADA PIEZA VIAJAN EN SU info, QUE SE ESCRIBE AL
+  ' GENERAR SU CANÓNICO: UNO VIEJO LLEVARÍA LAS PÁGINAS DE ANTES DE COMPONER
+  hCapitulos = CapitulosParaCanonicos(iIdLibro)
+  If hCapitulos = Null Then Return
+  iResultado = LanzarCanonicos(hCapitulos)
+  If iResultado <> m_Lanzadora.SALIDA_OK And iResultado <> m_Lanzadora.SALIDA_AVISOS Then
+    InformarCanonicos(iResultado, "")
+    Return
+  Endif
+
+  ' --- 5. LOS INSUMOS DEL LIBRO Y EL VOLCADO ---
+  oInsumos = PrepararInsumosLibro()
+  If Not oInsumos.bListo Then Return
+  If Not EscribirVolcadoCrossref(oInsumos) Then Return
+
+  ' --- 6. EL DEPÓSITO ---
+  iResultado = m_Lanzadora.EjecutarScript("generar_crossref_libro.sh", ArgumentosEnsamblado(oInsumos), PLAZO_CROSSREF,
+    "Generando el depósito Crossref del libro")
+
+  ' --- 7. INFORME ---
+  sSalida = oInsumos.sRutaProyecto &/ "salidas" &/ "crossref" &/ "crossref-l-" & oInsumos.sNombreBase & ".xml"
+  m_Lanzadora.InformarResultado(iResultado, "El depósito Crossref del libro", sSalida)
+
+End
+
+' ============================================
+' Función   : EscribirVolcadoCrossref
+' Propósito : Escribe tmp/crossref-libro-datos.xml: el encabezado del depósito,
+'             lo único que no está en el canónico. El depositante y el prefijo
+'             son los de la editorial principal (orden 1 de libro_editorial);
+'             el correo, el del libro si tiene uno (email-depositante), si no,
+'             el de la editorial. Lo que falte lo informa el script, que frena
+' Parámetros: oInsumos As CInsumosLibro — insumos del libro ya preparados
+' Retorna   : Boolean — False si no se pudo leer o escribir, con el motivo
+'             informado
+' ============================================
+Private Function EscribirVolcadoCrossref(oInsumos As CInsumosLibro) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hEditoriales As Result
+  Dim hLibro As Result
+  Dim sDepositante As String = ""
+  Dim sCorreo As String = ""
+  Dim sPrefijo As String = ""
+  Dim s As String
+  Dim cQ As String = Chr(34)
+
+  ' --- 2. LA EDITORIAL PRINCIPAL ---
+  hEditoriales = m_EditorialLibro.Leer(oInsumos.iIdLibro)
+  If hEditoriales = Null Then
+    m_Sonido.sonar("Error")
+    Message.Error(m_EditorialLibro.UltimoError())
+    Return False
+  Endif
+  ' LA PRIMERA FILA ES LA DE orden 1 (Leer ORDENA POR orden)
+  If hEditoriales.Available Then
+    sDepositante = m_Metadatos.NullToString(hEditoriales["nombre"])
+    sCorreo = m_Metadatos.NullToString(hEditoriales["email"])
+    sPrefijo = m_Metadatos.NullToString(hEditoriales["doi_prefix"])
+  Endif
+
+  ' --- 3. EL CORREO DEL LIBRO REEMPLAZA AL DE LA EDITORIAL ---
+  Try hLibro = m_ConexionBD.mConn.Exec("SELECT email_editorial FROM libros_md WHERE id_libro = &1", oInsumos.iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el correo del libro:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If hLibro.Available Then
+    If Trim(m_Metadatos.NullToString(hLibro["email_editorial"])) <> "" Then sCorreo = m_Metadatos.NullToString(hLibro["email_editorial"])
+  Endif
+
+  ' --- 4. EL ARCHIVO ---
+  s = "<?xml version=" & cQ & "1.0" & cQ & " encoding=" & cQ & "UTF-8" & cQ & "?>" & gb.NewLine
+  s &= "<crossref-libro-datos version=" & cQ & VERSION_VOLCADO_CROSSREF & cQ & ">" & gb.NewLine
+  s &= "  <depositante>" & m_XML.EscaparXML(Trim(sDepositante)) & "</depositante>" & gb.NewLine
+  s &= "  <correo>" & m_XML.EscaparXML(Trim(sCorreo)) & "</correo>" & gb.NewLine
+  s &= "  <prefijo>" & m_XML.EscaparXML(Trim(sPrefijo)) & "</prefijo>" & gb.NewLine
+  s &= "</crossref-libro-datos>" & gb.NewLine
+
+  Try File.Save(oInsumos.sRutaProyecto &/ VOLCADO_CROSSREF, s)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir " & VOLCADO_CROSSREF & ":" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
 
 End

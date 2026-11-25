@@ -48,12 +48,17 @@
 #
 # TIPO crossref
 #   El depósito del número (salidas/crossref/crossref-{número}.xml, de
-#   generar_crossref_revista.sh). Primero el esquema 5.4.0, sin red
+#   generar_crossref_revista.sh) o del libro (crossref-l-{base}.xml, de
+#   generar_crossref_libro.sh; el archivo dice cuál es: journal o book). Primero el esquema 5.4.0, sin red
 #   (validar_crossref): lo que no valida, Crossref lo rechaza, y es ERROR.
 #   Después el encabezado (el correo al que Crossref manda el informe) y,
 #   por artículo, lo que el esquema no exige y Crossref usa: la página, los
 #   ORCID y los ROR, los resúmenes, el financiamiento, la licencia y las
 #   referencias con DOI. El grupo de esas filas es el DOI del artículo.
+#   En el libro, el grupo «libro» (su DOI y página, el ISBN, las
+#   editoriales, las personas, el resumen, la licencia) y uno por pieza con
+#   DOI (página, autores, páginas, referencias). Las referencias van en las
+#   piezas, o en el libro si ninguna pieza tiene DOI.
 #
 # TIPO redalyc
 #   El paquete de Marcalyc de un artículo (salidas/redalyc/{archivo}.zip,
@@ -484,6 +489,13 @@ validar_crossref_archivo() {
     valor="$(valor_xpath "$abs" "normalize-space(//*[local-name()='head']/*[local-name()='timestamp'])")"
     registro "$objeto" archivo "Timestamp" INFO "$valor" "" \
         "Crossref exige que crezca en cada depósito: un archivo viejo, subido después de uno nuevo, se rechaza. Regenerá antes de subir"
+
+    # --- C2. UN LIBRO ---
+    # EL MISMO ESQUEMA Y EL MISMO ENCABEZADO; LO DEMÁS ES PROPIO DEL LIBRO
+    if [[ "$(valor_xpath "$abs" "count(//*[local-name()='book'])")" != "0" ]]; then
+        validar_crossref_libro "$abs" "$objeto"
+        return
+    fi
     total=$(valor_xpath "$abs" "count(//*[local-name()='journal_article'])")
     [[ "$total" =~ ^[0-9]+$ ]] || total=0
     if (( total == 0 )); then
@@ -550,6 +562,124 @@ validar_crossref_archivo() {
             registro "$objeto" "$id" "Referencias" INFO "ninguna" "" ""
         else
             m=$(valor_xpath "$abs" "count($a//*[local-name()='citation'][*[local-name()='doi']])")
+            registro "$objeto" "$id" "Referencias" OK "$n" "" \
+                "Con DOI: $m. Crossref relaciona las citas sobre todo por el DOI"
+        fi
+    done
+}
+
+# ============================================================================
+# Función   : validar_crossref_libro
+# Propósito : Los registros propios del depósito de un libro
+#             (generar_crossref_libro.sh): el libro y cada pieza con DOI.
+# Parámetros: $1 ruta absoluta del archivo  $2 objeto (nombre del archivo)
+# Nota      : LOS METADATOS DEL LIBRO ESTÁN EN book_metadata O EN
+#             book_series_metadata (LIBRO EN UNA SERIE CON ISSN)
+# ============================================================================
+validar_crossref_libro() {
+    local abs="$1" objeto="$2" l c i id valor n m total
+    l="(//*[local-name()='book_metadata'] | //*[local-name()='book_series_metadata'])[1]"
+
+    # --- A. EL LIBRO ---
+    registro "$objeto" libro "Tipo" INFO \
+        "$(valor_xpath "$abs" "string(//*[local-name()='book']/@book_type)")$([[ "$(valor_xpath "$abs" "count(//*[local-name()='book_series_metadata'])")" != "0" ]] && echo ", en serie")" "" \
+        "monograph, edited_book o reference, según el tipo de libro. En una serie con ISSN va una sola editorial"
+
+    valor="$(valor_xpath "$abs" "normalize-space($l/*[local-name()='doi_data']/*[local-name()='doi'])")"
+    registro "$objeto" libro "DOI" "$([[ -n "$valor" ]] && echo OK || echo ERROR)" "${valor:-ninguno}" "" \
+        "Crossref no acepta un libro ni sus capítulos sin el DOI de la obra"
+    valor="$(valor_xpath "$abs" "normalize-space($l/*[local-name()='doi_data']/*[local-name()='resource'])")"
+    if [[ "$valor" =~ ^https?:// ]]; then
+        registro "$objeto" libro "Página" OK "$valor" "" "El DOI del libro resuelve a esta URL"
+    else
+        registro "$objeto" libro "Página" ERROR "${valor:-ninguna}" "una URL http(s)" ""
+    fi
+
+    n=$(valor_xpath "$abs" "count($l/*[local-name()='isbn'])")
+    if [[ "$n" == "0" ]]; then
+        registro "$objeto" libro "ISBN" AVISO "ninguno (noisbn)" "el ISBN de cada soporte" \
+            "Sin ISBN, Crossref lo acepta con noisbn, pero el libro se identifica peor"
+    else
+        registro "$objeto" libro "ISBN" OK \
+            "$(valor_xpath "$abs" "concat($l/*[local-name()='isbn'][1], ' ', $l/*[local-name()='isbn'][1]/@media_type, substring(concat(' · ', $l/*[local-name()='isbn'][2], ' ', $l/*[local-name()='isbn'][2]/@media_type), 1, 200 * number(count($l/*[local-name()='isbn']) > 1)))")" "" ""
+    fi
+
+    n=$(valor_xpath "$abs" "count($l/*[local-name()='publisher'])")
+    registro "$objeto" libro "Editoriales" "$([[ "$n" == "0" ]] && echo ERROR || echo OK)" "$n" "" \
+        "$(valor_xpath "$abs" "normalize-space($l/*[local-name()='publisher'][1]/*[local-name()='publisher_name'])")"
+
+    n=$(valor_xpath "$abs" "count($l/*[local-name()='contributors']/*)")
+    if [[ "$n" == "0" ]]; then
+        registro "$objeto" libro "Autores y editores" INFO "ninguno" "" ""
+    else
+        m=$(valor_xpath "$abs" "count($l/*[local-name()='contributors']/*[local-name()='person_name'][*[local-name()='ORCID']])")
+        registro "$objeto" libro "Autores y editores" OK "$n" "" "Con ORCID: $m"
+    fi
+
+    n=$(valor_xpath "$abs" "count($l/*[local-name()='abstract'])")
+    registro "$objeto" libro "Resúmenes" "$([[ "$n" == "0" ]] && echo INFO || echo OK)" "$n" "" ""
+
+    valor="$(valor_xpath "$abs" "normalize-space($l/*[local-name()='program'][@name='AccessIndicators']/*[local-name()='license_ref'])")"
+    if [[ -n "$valor" ]]; then
+        registro "$objeto" libro "Licencia" OK "$valor" "" ""
+    else
+        registro "$objeto" libro "Licencia" AVISO "ninguna" "la URL de la licencia" \
+            "Un libro de acceso abierto declara su licencia"
+    fi
+
+    # LAS REFERENCIAS DEL LIBRO: SOLO SI NINGUNA PIEZA TIENE DOI
+    n=$(valor_xpath "$abs" "count($l/*[local-name()='citation_list']/*)")
+    if [[ "$n" != "0" ]]; then
+        m=$(valor_xpath "$abs" "count($l/*[local-name()='citation_list']/*[*[local-name()='doi']])")
+        registro "$objeto" libro "Referencias" OK "$n" "" \
+            "Con DOI: $m. Ninguna pieza tiene DOI: las referencias van en el libro"
+    fi
+
+    # --- B. LAS PIEZAS CON DOI ---
+    total=$(valor_xpath "$abs" "count(//*[local-name()='content_item'])")
+    [[ "$total" =~ ^[0-9]+$ ]] || total=0
+    registro "$objeto" libro "Piezas con DOI" INFO "$total" "" \
+        "Van solo las piezas con DOI. Sin ninguna, el libro se deposita solo"
+
+    for (( i = 1; i <= total; i++ )); do
+        c="(//*[local-name()='content_item'])[$i]"
+        id="$(valor_xpath "$abs" "normalize-space($c/*[local-name()='doi_data']/*[local-name()='doi'])")"
+        [[ -n "$id" ]] || id="pieza $i"
+
+        valor="$(valor_xpath "$abs" "normalize-space($c/*[local-name()='doi_data']/*[local-name()='resource'])")"
+        if [[ "$valor" =~ ^https?://.+/h-.+\.html$ ]]; then
+            registro "$objeto" "$id" "Página" OK "$valor" "" "El DOI resuelve a esta página del HTML del libro"
+        elif [[ "$valor" =~ ^https?:// ]]; then
+            registro "$objeto" "$id" "Página" AVISO "$valor" "url-libro + h-{archivo}.html" \
+                "No es una página de pieza del HTML del libro"
+        else
+            registro "$objeto" "$id" "Página" ERROR "${valor:-ninguna}" "una URL http(s)" ""
+        fi
+
+        valor="$(valor_xpath "$abs" "normalize-space($c/*[local-name()='titles']/*[local-name()='title'])")"
+        registro "$objeto" "$id" "Título" "$([[ -n "$valor" ]] && echo OK || echo AVISO)" "${valor:-ninguno}" "" ""
+
+        n=$(valor_xpath "$abs" "count($c/*[local-name()='contributors']/*)")
+        if [[ "$n" == "0" ]]; then
+            registro "$objeto" "$id" "Autores" INFO "ninguno" "" "En una monografía la pieza es del autor del libro"
+        else
+            m=$(valor_xpath "$abs" "count($c/*[local-name()='contributors']/*[local-name()='person_name'][*[local-name()='ORCID']])")
+            registro "$objeto" "$id" "Autores" OK "$n" "" "Con ORCID: $m"
+        fi
+
+        if [[ "$(valor_xpath "$abs" "count($c/*[local-name()='pages'])")" != "0" ]]; then
+            registro "$objeto" "$id" "Páginas" OK \
+                "$(valor_xpath "$abs" "concat($c/*[local-name()='pages']/*[local-name()='first_page'], '-', $c/*[local-name()='pages']/*[local-name()='last_page'])")" "" ""
+        else
+            registro "$objeto" "$id" "Páginas" AVISO "ninguna" "las de la composición" \
+                "Componé el PDF del libro y volvé a generar el depósito"
+        fi
+
+        n=$(valor_xpath "$abs" "count($c//*[local-name()='citation'])")
+        if [[ "$n" == "0" ]]; then
+            registro "$objeto" "$id" "Referencias" INFO "ninguna" "" ""
+        else
+            m=$(valor_xpath "$abs" "count($c//*[local-name()='citation'][*[local-name()='doi']])")
             registro "$objeto" "$id" "Referencias" OK "$n" "" \
                 "Con DOI: $m. Crossref relaciona las citas sobre todo por el DOI"
         fi
