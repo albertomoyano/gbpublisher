@@ -384,11 +384,12 @@ Private Function LeerMetadatosLibro() As Collection
   ' --- 1. INICIALIZACIÓN ---
   Dim cMeta As New Collection
   Dim hLibro As Result
+  Dim oEditoriales As CEditorialesLibro
 
   ' --- 2. CONSULTA ---
   Try hLibro = m_ConexionBD.mConn.Exec(
     "SELECT titulo_libro, subtitulo, titulo_abreviado, isbn_impreso, " &
-    "isbn_electronico, doi_libro, editorial, ciudad_publicacion, " &
+    "isbn_electronico, doi_libro, " &
     "ano_publicacion, idioma_principal, url_licencia, licencia_defecto, " &
     "descripcion_libro, imagen_tapa, logo_portada, logo_coleccion, " &
     "texto_catalogacion_digital, texto_legal_digital, tipo_libro, " &
@@ -416,8 +417,20 @@ Private Function LeerMetadatosLibro() As Collection
   cMeta["isbn_impreso"] = m_Metadatos.NullToString(hLibro["isbn_impreso"])
   cMeta["isbn_electronico"] = m_Metadatos.NullToString(hLibro["isbn_electronico"])
   cMeta["doi"] = m_Metadatos.NullToString(hLibro["doi_libro"])
-  cMeta["editorial"] = m_Metadatos.NullToString(hLibro["editorial"])
-  cMeta["ciudad"] = m_Metadatos.NullToString(hLibro["ciudad_publicacion"])
+  ' LAS EDITORIALES (libro_editorial, 2.2.0): editorial LAS NOMBRA A TODAS,
+  ' UNIDAS COMO EN LA FICHA, PARA LA TAPA Y LOS CRÉDITOS; editoriales ES LA
+  ' LISTA, PARA UN dc:publisher POR CADA UNA EN EL OPF. ES UN OBJETO: NO SE
+  ' PIERDE EN LA Collection AUNQUE ESTÉ VACÍO, A DIFERENCIA DE UNA CADENA
+  ' VACÍA. ciudad ES LA DE LA PRINCIPAL, EL LUGAR DE EDICIÓN
+  oEditoriales = m_EditorialLibro.Resumen($iIdLibro)
+  If Not oEditoriales Then
+    m_Sonido.sonar("Error")
+    Message.Error(m_EditorialLibro.UltimoError())
+    Return Null
+  Endif
+  cMeta["editorial"] = oEditoriales.Unidos()
+  cMeta["editoriales"] = oEditoriales.aNombres
+  cMeta["ciudad"] = oEditoriales.sCiudad
   cMeta["anio"] = m_Metadatos.NullToString(hLibro["ano_publicacion"])
   cMeta["idioma"] = m_Metadatos.NullToString(hLibro["idioma_principal"])
   cMeta["url_licencia"] = m_Metadatos.NullToString(hLibro["url_licencia"])
@@ -1132,6 +1145,7 @@ Private Function ArmarOPF(cMeta As Collection, aPiezas As String[]) As String
   Dim sPieza As String
   Dim sId As String
   Dim i As Integer
+  Dim sEditorial As String
 
   aFuentes.Add("NotoSerif-Regular.ttf")
   aFuentes.Add("NotoSerif-Bold.ttf")
@@ -1162,7 +1176,11 @@ Private Function ArmarOPF(cMeta As Collection, aPiezas As String[]) As String
   s &= "<dc:language>" & EscaparXml(cMeta["idioma"]) & "</dc:language>" & Chr(10)
   ' UNA PERSONA POR ELEMENTO, CON SU ROL (EPUB 3.3 §5.5.3.2.3)
   s &= PersonasOpf(cMeta["tipo_libro"])
-  If cMeta["editorial"] <> "" Then s &= "<dc:publisher>" & EscaparXml(cMeta["editorial"]) & "</dc:publisher>" & Chr(10)
+  ' UN dc:publisher POR EDITORIAL DEL LIBRO, EN SU ORDEN: EN UNA COEDICIÓN
+  ' CADA SELLO ES UN EDITOR (libro_editorial, 2.2.0)
+  For Each sEditorial In cMeta["editoriales"]
+    s &= "<dc:publisher>" & EscaparXml(sEditorial) & "</dc:publisher>" & Chr(10)
+  Next
   If cMeta["anio"] <> "" Then s &= "<dc:date>" & EscaparXml(cMeta["anio"]) & "</dc:date>" & Chr(10)
   If cMeta["descripcion"] <> "" Then s &= "<dc:description>" & EscaparXml(cMeta["descripcion"]) & "</dc:description>" & Chr(10)
   If cMeta["url_licencia"] <> "" Then s &= "<dc:rights>" & EscaparXml(cMeta["url_licencia"]) & "</dc:rights>" & Chr(10)

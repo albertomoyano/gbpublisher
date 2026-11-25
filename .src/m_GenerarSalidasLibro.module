@@ -32,6 +32,13 @@ Private Const CARPETA_PDFA As String = "pdfa"
 Private Const SUFIJO_PDFA2U As String = "_pdfa2u"
 Private Const NIVEL_PDFA2U As String = "2u"
 
+' LA PAGINACIÓN QUE DEJA compilar_pdf_libro.sh AL COMPONER EL LIBRO COMPLETO,
+' RELATIVA AL PROYECTO (claude/crossref-libros.md, F3). EL FORMATO ESTÁ EN EL
+' ENCABEZADO DEL SCRIPT
+Private Const ARCHIVO_PAGINACION As String = "tmp/paginacion-libro.tsv"
+' LA FILA DEL TOTAL DEL LIBRO EN ESE ARCHIVO: NINGUNA PIEZA SE LLAMA ASÍ
+Private Const FILA_LIBRO As String = "(libro)"
+
 ' LISTA DE CAPÍTULOS QUE GAMBAS ESCRIBE PARA generar_canonicos_capitulos.sh,
 ' RELATIVA AL PROYECTO. UNA SOLA: NO PUEDE HABER DOS LOTES A LA VEZ
 Private Const LISTA_CANONICOS As String = "tmp/lote-canonicos.tsv"
@@ -1240,6 +1247,12 @@ Public Sub GenerarPDFLibro()
   Dim aArgumentos As New String[]
   Dim iRespuesta As Integer
   Dim iResultado As Integer
+  ' LO QUE HACE FALTA PARA GUARDAR LA PAGINACIÓN AL TERMINAR (APARTADO 8)
+  Dim iIdLibro As Integer
+  Dim bPublicado As Boolean
+  Dim sTotalAntes As String
+  Dim bMarcaPaginas As Boolean
+  Dim sDeposito As String
 
   ' --- 0. MOSTRAR CONSOLA ---
   FMain.tbMostrarPanelInferior.Value = True
@@ -1251,8 +1264,12 @@ Public Sub GenerarPDFLibro()
   If Not FMain.ConfirmarDescartarCambios() Then Return
 
   ' --- 2. LEER EL ESTADO EDITORIAL ---
+  ' TAMBIÉN LO QUE USA LA PAGINACIÓN: EL TOTAL CON EL QUE SE VA A COMPONER LA
+  ' PÁGINA LEGAL ({paginas} SE REEMPLAZA AL PREPARAR, ANTES DE COMPILAR) Y SI
+  ' EL LIBRO YA ESTÁ PUBLICADO
   Try hLibro = m_ConexionBD.mConn.Exec(
-    "SELECT estado_libro FROM libros_md WHERE id_proyecto = &1 LIMIT 1",
+    "SELECT id_libro, estado_libro, estado_publicacion, numero_paginas, " &
+    "texto_legal, texto_catalogacion, crossref_fecha_deposito FROM libros_md WHERE id_proyecto = &1 LIMIT 1",
     m_InicioCierre.IdProyectoEnCurso)
 
   If Error Then
@@ -1269,6 +1286,16 @@ Public Sub GenerarPDFLibro()
 
   sEstado = LCase(Trim(hLibro["estado_libro"]))
   sPrestaciones = DescribirPrestaciones(sEstado)
+
+  iIdLibro = hLibro["id_libro"]
+  bPublicado = EsLibroPublicado(m_Metadatos.NullToString(hLibro["estado_publicacion"]))
+  sTotalAntes = m_Metadatos.NullToString(hLibro["numero_paginas"])
+  ' SOLO LOS TEXTOS DEL IMPRESO: {paginas} EN UN TEXTO DIGITAL DETIENE LA
+  ' GENERACIÓN (SC-25)
+  bMarcaPaginas = InStr(m_Metadatos.NullToString(hLibro["texto_legal"]) &
+    m_Metadatos.NullToString(hLibro["texto_catalogacion"]), "{paginas}") > 0
+  ' DEPOSITADO EN CROSSREF (2.3.0): SI LAS PÁGINAS CAMBIAN, HAY QUE REDEPOSITAR
+  If Not IsNull(hLibro["crossref_fecha_deposito"]) Then sDeposito = Format(hLibro["crossref_fecha_deposito"], "dd/mm/yyyy")
 
   ' --- 3. CONSULTA AL USUARIO ---
   ' Message.Question DEVUELVE 1 PARA EL PRIMER BOTÓN, 2 PARA EL SEGUNDO Y 3
@@ -1331,6 +1358,13 @@ Public Sub GenerarPDFLibro()
   ' --- 7. INFORME ---
   m_Lanzadora.InformarResultado(iResultado, "El PDF del libro",
     m_InicioCierre.RutaProyectoEnCurso &/ "salidas" &/ "pdf" &/ sNombreSalida & ".pdf")
+
+  ' --- 8. LAS PÁGINAS A LA BASE (claude/crossref-libros.md, F3) ---
+  ' CON 0 O 3 EL PDF SE ENTREGÓ. SI EL SCRIPT NO PUDO LEER LAS PÁGINAS, NO
+  ' DEJÓ EL ARCHIVO Y YA LO DIJO EN LA TERMINAL
+  If iResultado = m_Lanzadora.SALIDA_OK Or iResultado = m_Lanzadora.SALIDA_AVISOS Then
+    GuardarPaginacion(iIdLibro, bPublicado, sTotalAntes, bMarcaPaginas, sDeposito)
+  Endif
 
 Catch
   ' RED DE ÚLTIMO RECURSO (RC-GM-20). LOS FALLOS PREVISIBLES SE ATRAPAN CON
@@ -1530,5 +1564,248 @@ Catch
   ' Try + If Error EN SU PUNTO.
   m_Sonido.sonar("Error")
   Message.Error("Error al preparar la salida PDF/A: " & Error.Text)
+
+End
+
+' ============================================
+' Función   : EsLibroPublicado
+' Propósito : Si el estado bibliográfico del libro es de un libro ya publicado
+' Parámetros: sEstadoPublicacion As String — libros_md.estado_publicacion
+' Retorna   : Boolean — True en publicado, agotado y descatalogado
+' Nota      : ES EL ESTADO BIBLIOGRÁFICO, NO EL DE PROCESO (estado_libro, DONDE
+'             «publicado» ES EL PERFIL DE IMPRENTA): UN LIBRO SE COMPONE PARA
+'             IMPRENTA ANTES DE ESTAR PUBLICADO
+' ============================================
+Private Function EsLibroPublicado(sEstadoPublicacion As String) As Boolean
+
+  Select Case LCase(Trim(sEstadoPublicacion))
+    Case "publicado", "agotado", "descatalogado"
+      Return True
+  End Select
+  Return False
+
+End
+
+' ============================================
+' Función   : GuardarPaginacion
+' Propósito : Lee tmp/paginacion-libro.tsv (compilar_pdf_libro.sh) y guarda
+'             en la base dónde quedó cada pieza y el total del libro, en una
+'             transacción: todo o nada. Es el único escritor de esas páginas
+'             (claude/crossref-libros.md, F3): los formularios las muestran y
+'             no las graban
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+'             bPublicado As Boolean — el libro ya está publicado: no se toca
+'             sTotalAntes As String — numero_paginas antes de componer: el que
+'             llevó {paginas} en la página legal
+'             bMarcaPaginas As Boolean — los textos del impreso usan {paginas}
+'             sDeposito As String — fecha del depósito en Crossref (dd/mm/aaaa),
+'             o "" si el libro no está depositado
+' Retorna   : Integer — cuántas piezas se actualizaron; 0 si no había archivo;
+'             -1 si no se pudo (ya se avisó)
+' Nota      : LAS PIEZAS DEL LIBRO QUE NO ESTÁN EN EL ARCHIVO (PÁGINAS
+'             ESPECIALES SIN FOLIO, PIEZAS SIN CUERPO, PIEZAS QUE YA NO
+'             ESTÁN EN EL main.tex) QUEDAN SIN PÁGINAS: LA COMPOSICIÓN DICE
+'             QUE NO TIENEN FOLIO. Chr(9) Y NO "\t" PARA EL TABULADOR (SC-01)
+' ============================================
+Private Function GuardarPaginacion(iIdLibro As Integer, bPublicado As Boolean, sTotalAntes As String, bMarcaPaginas As Boolean, sDeposito As String) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
+  Dim sContenido As String
+  Dim sLinea As String
+  Dim aCampos As String[]
+  Dim sTotal As String = ""
+  Dim aArchivos As New String[]
+  Dim aIds As New String[]
+  Dim aInicios As New String[]
+  Dim aFines As New String[]
+  Dim aPaginas As New String[]
+  Dim rFilas As Result
+  Dim cId As New Collection
+  Dim cRango As New Collection
+  Dim sDiferencias As String = ""
+  Dim sRango As String
+  Dim hConn As Connection
+  Dim i As Integer
+
+  ' --- 2. EL ARCHIVO DEL SCRIPT ---
+  ' SI NO ESTÁ, EL SCRIPT DECIDIÓ NO ESCRIBIRLO (COMPOSICIÓN PARCIAL, UNA
+  ' PIEZA ILEGIBLE) Y LO INFORMÓ EN LA TERMINAL
+  sRuta = m_InicioCierre.RutaProyectoEnCurso &/ ARCHIVO_PAGINACION
+  If Not Exist(sRuta) Then Return 0
+  Try sContenido = File.Load(sRuta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("El PDF está, pero no se pudo leer " & ARCHIVO_PAGINACION & ":" & gb.NewLine &
+      "las páginas no se guardaron." & gb.NewLine & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  ' --- 3. LAS FILAS: EL TOTAL Y UNA POR PIEZA CON FOLIO ---
+  For Each sLinea In Split(sContenido, gb.NewLine)
+    If Trim(sLinea) = "" Then Continue
+    If sLinea Begins "#" Then Continue
+    aCampos = Split(sLinea, Chr(9))
+    If aCampos.Count <> 5 Then
+      m_Sonido.sonar("Error")
+      Message.Error(ARCHIVO_PAGINACION & " tiene una línea que no se entiende:" & gb.NewLine &
+        "«" & sLinea & "»" & gb.NewLine & gb.NewLine & "Las páginas no se guardaron.")
+      Return -1
+    Endif
+    If aCampos[0] = FILA_LIBRO Then
+      sTotal = aCampos[4]
+    Else
+      aArchivos.Add(aCampos[0])
+      aIds.Add(aCampos[1])
+      aInicios.Add(aCampos[2])
+      aFines.Add(aCampos[3])
+      aPaginas.Add(aCampos[4])
+    Endif
+  Next
+
+  ' --- 4. LAS PIEZAS DEL LIBRO EN LA BASE ---
+  Try rFilas = m_ConexionBD.mConn.Exec("SELECT id_capitulo, nombre_archivo, pagina_inicio, pagina_fin " &
+    "FROM capitulos WHERE id_libro = &1", iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las piezas del libro:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+  While rFilas.Available
+    If Not IsNull(rFilas!nombre_archivo) Then
+      cId[rFilas!nombre_archivo] = CStr(rFilas!id_capitulo)
+      cRango[rFilas!nombre_archivo] = RangoLegible(m_Metadatos.NullToString(rFilas!pagina_inicio), m_Metadatos.NullToString(rFilas!pagina_fin))
+    Endif
+    rFilas.MoveNext
+  Wend
+
+  ' --- 5. CADA PIEZA DEL ARCHIVO TIENE QUE SER DE ESTE LIBRO ---
+  ' EL NOMBRE ES LA IDENTIDAD (SC-82) Y EL id DE LA MARCA cap-ID LO CONFIRMA:
+  ' UN .aux DE OTRO LIBRO O UNA PIEZA RENOMBRADA SIN RECOMPONER NO PASAN
+  For i = 0 To aArchivos.Max
+    If Not cId.Exist(aArchivos[i]) Or If cId[aArchivos[i]] <> aIds[i] Then
+      m_Sonido.sonar("Error")
+      Message.Error(ARCHIVO_PAGINACION & " no corresponde a las piezas del libro:" & gb.NewLine &
+        "«" & aArchivos[i] & "» (cap-" & aIds[i] & ") no está en la base con ese nombre." & gb.NewLine & gb.NewLine &
+        "Las páginas no se guardaron. Regenerá los canónicos y volvé a componer.")
+      Return -1
+    Endif
+  Next
+
+  ' --- 6. QUÉ CAMBIA ESTA COMPOSICIÓN ---
+  ' LO USAN EL LIBRO PUBLICADO (QUE NO SE TOCA) Y EL DEPOSITADO (QUE HAY QUE
+  ' REDEPOSITAR). UNA PIEZA QUE PIERDE SU FOLIO TAMBIÉN ES UN CAMBIO
+  For i = 0 To aArchivos.Max
+    sRango = RangoLegible(aInicios[i], aFines[i])
+    If cRango[aArchivos[i]] <> sRango Then
+      sDiferencias &= "  " & aArchivos[i] & ": " & cRango[aArchivos[i]] & " → " & sRango & gb.NewLine
+    Endif
+    cRango.Remove(aArchivos[i])
+  Next
+  For Each sRango In cRango
+    If sRango <> RangoLegible("", "") Then sDiferencias &= "  " & cRango.Key & ": " & sRango & " → " & RangoLegible("", "") & gb.NewLine
+  Next
+  If sTotal <> sTotalAntes Then sDiferencias &= "  total: " & If(sTotalAntes = "", "(sin páginas)", sTotalAntes) & " → " & sTotal & gb.NewLine
+
+  ' --- 6b. UN LIBRO PUBLICADO NO SE TOCA ---
+  ' SE AVISA SOLO SI ESTA COMPOSICIÓN LO CAMBIARÍA
+  If bPublicado Then
+    If sDiferencias <> "" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("El libro está publicado: sus páginas no se cambian." & gb.NewLine & gb.NewLine &
+        "Esta composición quedó distinta:" & gb.NewLine & sDiferencias)
+    Endif
+    Return 0
+  Endif
+
+  ' --- 7. LA TRANSACCIÓN ---
+  ' TODO O NADA: UN LIBRO CON LA MITAD DE LAS PÁGINAS NUEVAS Y LA MITAD VIEJAS
+  ' PARECERÍA COMPUESTO Y NO LO ESTÁ
+  hConn = m_ConexionBD.mConn
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron guardar las páginas:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  ' PRIMERO TODAS SIN PÁGINAS; DESPUÉS, LAS QUE TIENEN FOLIO
+  Try hConn.Exec("UPDATE capitulos SET pagina_inicio = NULL, pagina_fin = NULL, numero_paginas = NULL WHERE id_libro = &1", iIdLibro)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron guardar las páginas:" & gb.NewLine & Error.Text & gb.NewLine & gb.NewLine & "No se guardó ninguna.")
+    Return -1
+  Endif
+
+  For i = 0 To aArchivos.Max
+    Try hConn.Exec("UPDATE capitulos SET pagina_inicio = &1, pagina_fin = &2, numero_paginas = &3 WHERE id_capitulo = &4",
+      aInicios[i], aFines[i], CInt(aPaginas[i]), CInt(aIds[i]))
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudieron guardar las páginas de «" & aArchivos[i] & "»:" & gb.NewLine & Error.Text &
+        gb.NewLine & gb.NewLine & "No se guardó ninguna.")
+      Return -1
+    Endif
+  Next
+
+  ' EL TOTAL: PÁGINAS FÍSICAS DEL PDF, CORTESÍA INCLUIDA (SC-25)
+  If sTotal <> "" Then
+    Try hConn.Exec("UPDATE libros_md SET numero_paginas = &1 WHERE id_libro = &2", CInt(sTotal), iIdLibro)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo guardar el total de páginas del libro:" & gb.NewLine & Error.Text &
+        gb.NewLine & gb.NewLine & "No se guardó ninguna página.")
+      Return -1
+    Endif
+  Endif
+
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron guardar las páginas:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  ' --- 8. LA PÁGINA LEGAL ---
+  ' {paginas} SE REEMPLAZÓ ANTES DE COMPILAR, CON EL TOTAL ANTERIOR: SI CAMBIÓ,
+  ' EL PDF DICE OTRO NÚMERO. NO SE RECOMPONE SOLO (EL MISMO CRITERIO QUE EL
+  ' DESCARTE DE \ztotpages): SE AVISA
+  If bMarcaPaginas And If sTotal <> "" And If sTotal <> sTotalAntes Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El libro tiene ahora " & sTotal & " páginas, pero la página legal" & gb.NewLine &
+      "se compuso con «" & If(sTotalAntes = "", "??", sTotalAntes) & "»." & gb.NewLine & gb.NewLine &
+      "Volvé a componer el PDF para que diga " & sTotal & ".")
+  Endif
+
+  ' --- 9. EL DEPÓSITO EN CROSSREF ---
+  ' LAS PÁGINAS DE CROSSREF SON LAS DEL ÚLTIMO DEPÓSITO: SI CAMBIARON, EL
+  ' REGISTRO QUEDÓ VIEJO. NO SE REDEPOSITA SOLO: LA SUBIDA ES MANUAL
+  If sDeposito <> "" And If sDiferencias <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El libro está depositado en Crossref desde el " & sDeposito & "," & gb.NewLine &
+      "y esta composición cambió sus páginas:" & gb.NewLine & sDiferencias & gb.NewLine &
+      "Cuando el PDF sea el definitivo, generá el XML de Crossref y volvé a depositarlo.")
+  Endif
+
+  Return aArchivos.Count
+
+End
+
+' ============================================
+' Función   : RangoLegible
+' Propósito : El rango de páginas de una pieza para los avisos de
+'             GuardarPaginacion
+' Parámetros: sInicio As String — página de inicio ("" si no tiene)
+'             sFin As String — página de fin ("" si no tiene)
+' Retorna   : String — «45–60», o «(sin páginas)» si no tiene
+' ============================================
+Private Function RangoLegible(sInicio As String, sFin As String) As String
+
+  If sInicio = "" And sFin = "" Then Return "(sin páginas)"
+  Return sInicio & "–" & sFin
 
 End

@@ -11,29 +11,30 @@
 '             parámetro: FSysAdmin trabaja con hConnServidor y se puede abrir
 '             SIN SESIÓN DE USUARIO, cuando m_ConexionBD.mConn no existe (el
 '             mismo criterio que m_Revistas).
-' Requiere  : esquema 1.26.0 (editorial, editorial_credito, revista.id_editorial).
+' Requiere  : esquema 1.26.0 (editorial, editorial_credito, revista.id_editorial)
+'             y 2.2.0 (libro_editorial: las editoriales de los libros).
 ' Dependencias: m_Sonido, m_Revistas (NuloSiVacio, TextoDe).
 ' ==============================================================================
 
 ' TÍTULO PROVISORIO DEL ALTA MÍNIMA: EL EDITOR LO REEMPLAZA ANTES DE GUARDAR
 Private Const NOMBRE_PROVISORIO As String = "(Nueva editorial)"
 
-' ============================================
-' Función   : ListarEditoriales
 ' Propósito : Las editoriales para la grilla, ordenadas por nombre, con la
-'             cantidad de revistas de cada una
+'             cantidad de revistas y de libros de cada una
 ' Parámetros: hConn As Connection — conexión abierta
-' Retorna   : Result — id_editorial, nombre, revistas; Null si falló (ya se
-'             informó)
+' Retorna   : Result — id_editorial, nombre, revistas, libros; Null si falló
+'             (ya se informó)
 ' ============================================
 Public Function ListarEditoriales(hConn As Connection) As Result
 
   Dim rDatos As Result
 
-  ' LEFT JOIN: UNA EDITORIAL RECIÉN CREADA TODAVÍA NO TIENE REVISTAS
-  Try rDatos = hConn.Exec("SELECT e.id_editorial, e.nombre, COUNT(r.id_revista) AS revistas " &
-    "FROM editorial e LEFT JOIN revista r ON r.id_editorial = e.id_editorial " &
-    "GROUP BY e.id_editorial, e.nombre ORDER BY e.nombre")
+  ' DOS SUBCONSULTAS Y NO DOS LEFT JOIN: CON LOS DOS JOIN, CADA REVISTA SE
+  ' CONTARÍA UNA VEZ POR LIBRO Y AL REVÉS. UNA EDITORIAL RECIÉN CREADA DA 0 Y 0
+  Try rDatos = hConn.Exec("SELECT e.id_editorial, e.nombre, " &
+    "(SELECT COUNT(*) FROM revista r WHERE r.id_editorial = e.id_editorial) AS revistas, " &
+    "(SELECT COUNT(*) FROM libro_editorial le WHERE le.id_editorial = e.id_editorial) AS libros " &
+    "FROM editorial e ORDER BY e.nombre")
   If Error Then
     m_Sonido.sonar("Error")
     Message.Error("No se pudieron leer las editoriales (¿falta la actualización de esquema 1.26.0?):" & gb.NewLine & Error.Text)
@@ -94,11 +95,12 @@ End
 
 ' ============================================
 ' Función   : BorrarEditorial
-' Propósito : Borra una editorial que no tiene revistas, junto con sus
-'             créditos, en una transacción. Sin revistas no hay números que
-'             muestren esos créditos: no se pierde historia. Con revistas no
-'             se borra (además la clave foránea de revista lo frenaría). La
-'             confirmación la pide el formulario
+' Propósito : Borra una editorial que no tiene revistas ni libros, junto con
+'             sus créditos, en una transacción. Sin revistas no hay números
+'             que muestren esos créditos: no se pierde historia. Con revistas
+'             o con libros no se borra (además las claves foráneas de revista
+'             y de libro_editorial lo frenarían). La confirmación la pide el
+'             formulario
 ' Parámetros: hConn As Connection — conexión abierta
 '             iIdEditorial As Integer — editorial
 ' Retorna   : Boolean — True si se borró
@@ -127,6 +129,21 @@ Public Function BorrarEditorial(hConn As Connection, iIdEditorial As Integer) As
     hConn.Rollback()
     m_Sonido.sonar("Warning")
     Message.Warning("La editorial tiene revistas: no se puede borrar.")
+    Return False
+  Endif
+
+  ' --- 2.b ¿TIENE LIBROS? (libro_editorial, 2.2.0) ---
+  Try rDatos = hConn.Exec("SELECT COUNT(*) AS total FROM libro_editorial WHERE id_editorial = &1", iIdEditorial)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron contar los libros de la editorial:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rDatos!total > 0 Then
+    hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("La editorial tiene libros: no se puede borrar. Quitala primero de la ficha de cada libro.")
     Return False
   Endif
 

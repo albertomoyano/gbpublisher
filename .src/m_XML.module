@@ -3547,7 +3547,9 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
   ' VARIABLES PARA CRediT DE AUTORES (BLOQUE 3)
   Dim sJsonLimpio As String
 
-  ' VARIABLES PARA DATOS EDITORIALES (BLOQUE 4)
+  ' VARIABLES PARA DATOS EDITORIALES (BLOQUE 4): UNA VUELTA POR EDITORIAL
+  ' DEL LIBRO (libro_editorial, 2.2.0)
+  Dim hEditoriales As Result
   Dim sEditorial As String
   Dim sInstitucionEd As String
   Dim sRorEditorial As String
@@ -3555,6 +3557,7 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
   Dim sPaisPub As String
   Dim sDireccionEd As String
   Dim sEmailEd As String
+  Dim sEmailLibro As String
 
   ' VARIABLES PARA RESUMEN Y RESUMEN TRADUCIDO (BLOQUE 11)
   Dim sIdiomaPrinc As String
@@ -3974,59 +3977,43 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
   ' ==========================================================
   ' BLOQUE 4. DATOS EDITORIALES (PUBLISHER)
   ' ==========================================================
-  ' publisher AGRUPA publishername + address. SOLO EMITIMOS SI HAY
-  ' ALGÚN DATO. institucion_editora VA COMO orgname DENTRO DE address
-  ' (SUBORDINADO A publishername).
-  sEditorial = ""
-  sInstitucionEd = ""
-  sRorEditorial = ""
-  sCiudadPub = ""
-  sPaisPub = ""
-  sDireccionEd = ""
-  sEmailEd = ""
-
-  If Not IsNull(hLibro["editorial"]) Then
-    If Len(TrimUTF8(hLibro["editorial"])) > 0 Then
-      sEditorial = TrimUTF8(hLibro["editorial"])
-    Endif
-  Endif
-  If Not IsNull(hLibro["institucion_editora"]) Then
-    If Len(TrimUTF8(hLibro["institucion_editora"])) > 0 Then
-      sInstitucionEd = TrimUTF8(hLibro["institucion_editora"])
-    Endif
-  Endif
-  If Not IsNull(hLibro["ror_editorial"]) Then
-    If Len(TrimUTF8(hLibro["ror_editorial"])) > 0 Then
-      sRorEditorial = TrimUTF8(hLibro["ror_editorial"])
-    Endif
-  Endif
-  If Not IsNull(hLibro["ciudad_publicacion"]) Then
-    If Len(TrimUTF8(hLibro["ciudad_publicacion"])) > 0 Then
-      sCiudadPub = TrimUTF8(hLibro["ciudad_publicacion"])
-    Endif
-  Endif
-  If Not IsNull(hLibro["pais_publicacion"]) Then
-    If Len(TrimUTF8(hLibro["pais_publicacion"])) > 0 Then
-      sPaisPub = TrimUTF8(hLibro["pais_publicacion"])
-    Endif
-  Endif
-  If Not IsNull(hLibro["direccion_editorial"]) Then
-    If Len(TrimUTF8(hLibro["direccion_editorial"])) > 0 Then
-      sDireccionEd = TrimUTF8(hLibro["direccion_editorial"])
-    Endif
-  Endif
+  ' UN publisher POR EDITORIAL DEL LIBRO, EN SU ORDEN: EL PRIMERO ES LA
+  ' PRINCIPAL (libro_editorial, 2.2.0; claude/crossref-libros.md, F1). LAS
+  ' HOJAS QUE LEEN UN SOLO publisher TOMAN EL PRIMERO, Y ESE ES LA PRINCIPAL.
+  ' publisher AGRUPA publishername + address. institucion VA COMO orgname
+  ' DENTRO DE address (SUBORDINADO A publishername). LOS DATOS SALEN DE LA
+  ' TABLA editorial; DEL LIBRO SOLO EL CORREO, QUE SI ESTÁ CARGADO REEMPLAZA
+  ' AL DE LA PRINCIPAL (COMO revista.email_editorial EN REVISTAS)
+  sEmailLibro = ""
   If Not IsNull(hLibro["email_editorial"]) Then
     If Len(TrimUTF8(hLibro["email_editorial"])) > 0 Then
-      sEmailEd = TrimUTF8(hLibro["email_editorial"])
+      sEmailLibro = TrimUTF8(hLibro["email_editorial"])
     Endif
   Endif
 
-  If sEditorial <> "" Or sInstitucionEd <> "" Or sCiudadPub <> "" Or sPaisPub <> "" Then
+  hEditoriales = m_EditorialLibro.Leer(iIdLibro)
+  If Not hEditoriales Then
+    m_Sonido.sonar("Error")
+    Message.Error(m_EditorialLibro.UltimoError())
+    Return False
+  Endif
+
+  ' UN LIBRO SIN EDITORIAL NO LLEVA publisher: EL CANÓNICO ES VÁLIDO IGUAL, Y
+  ' QUIEN LA EXIGE (CROSSREF) FRENA POR SU CUENTA
+  While hEditoriales.Available
+    sEditorial = TrimUTF8(m_Metadatos.NullToString(hEditoriales["nombre"]))
+    sInstitucionEd = TrimUTF8(m_Metadatos.NullToString(hEditoriales["institucion"]))
+    sRorEditorial = TrimUTF8(m_Metadatos.NullToString(hEditoriales["ror"]))
+    sCiudadPub = TrimUTF8(m_Metadatos.NullToString(hEditoriales["ciudad"]))
+    sPaisPub = TrimUTF8(m_Metadatos.NullToString(hEditoriales["pais"]))
+    sDireccionEd = TrimUTF8(m_Metadatos.NullToString(hEditoriales["direccion"]))
+    sEmailEd = TrimUTF8(m_Metadatos.NullToString(hEditoriales["email"]))
+    ' EL REEMPLAZO DEL LIBRO VALE SOLO PARA LA PRINCIPAL
+    If hEditoriales["orden"] = 1 And If sEmailLibro <> "" Then sEmailEd = sEmailLibro
+
     sXML &= "  <publisher>" & Chr(10)
-    If sEditorial <> "" Then
-      sXML &= "    <publishername>" & EscaparXML(sEditorial) &
-        "</publishername>" & Chr(10)
-    Endif
+    sXML &= "    <publishername>" & EscaparXML(sEditorial) &
+      "</publishername>" & Chr(10)
     If sInstitucionEd <> "" Or sCiudadPub <> "" Or sPaisPub <> "" Or
         sDireccionEd <> "" Or sEmailEd <> "" Or sRorEditorial <> "" Then
       sXML &= "    <address>" & Chr(10)
@@ -4055,7 +4042,8 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
       sXML &= "    </address>" & Chr(10)
     Endif
     sXML &= "  </publisher>" & Chr(10)
-  Endif
+    hEditoriales.MoveNext
+  Wend
 
   ' ==========================================================
   ' BLOQUE 5. COLECCIÓN Y SERIE

@@ -31,6 +31,19 @@ Private aRolesAutoresLibro As New String[]
 ' BANDERA ANTI-ECO: SUPRIME EFECTOS COLATERALES AL CARGAR EL COMBO DE ROL
 ' DESDE gbLibro_Click (EL COMBO SE ACTUALIZA SOLO PARA REFLEJAR, NO PARA GUARDAR).
 Private bCargandoRolLibro As Boolean
+' EDITORIALES DEL LIBRO (libro_editorial, 2.2.0): SE EDITAN EN MEMORIA Y SE
+' GRABAN CON «Guardar» (SC-73). $aIdsEditorialesCombo ES PARALELO A
+' cmbEditorialLibro; $aIdsEditorialesLibro Y $aNombresEditorialesLibro SON
+' PARALELOS A lstEditorialesLibro, EN EL ORDEN DEL LIBRO: LA PRIMERA ES LA
+' PRINCIPAL. LA LISTA SE REDIBUJA SIEMPRE DESDE LOS ARREGLOS
+Private $aIdsEditorialesCombo As New Integer[]
+Private $aIdsEditorialesLibro As New Integer[]
+Private $aNombresEditorialesLibro As New String[]
+' FECHA DEL DEPÓSITO EN CROSSREF (libros_md.crossref_fecha_deposito, 2.3.0):
+' Null = SIN DEPOSITAR. SE EDITA EN MEMORIA CON LOS DOS BOTONES Y SE GRABA CON
+' «Guardar». NO ES UN DateBox: UN DateBox SIEMPRE TIENE UNA FECHA Y GRABARÍA
+' UN DEPÓSITO QUE NO EXISTIÓ (claude/crossref-libros.md, F2)
+Private $vFechaDeposito As Variant
 
 ' ============================================
 ' Función   : Form_Show
@@ -157,6 +170,10 @@ Public Sub Form_Open()
   ' SE MUESTRA EL nombre COMPLETO DE LA COLECCIÓN.
   ' EL ÍNDICE 0 ES SIEMPRE "(sin colección)" PARA LIBROS SUELTOS.
   PoblarComboColecciones()
+
+  ' --- 5.b POBLAR COMBOBOX DE EDITORIALES ---
+  ' ANTES DE CARGAR LOS METADATOS: m_Metadatos LLENA LA LISTA DEL LIBRO
+  PoblarComboEditoriales()
 
   ' --- 6. POBLAR COMBOBOX DE INTEGRACIÓN GITHUB ---
   cmb_github.Clear
@@ -445,7 +462,9 @@ End
 ' ════════════════════════════════════════════════════════════════════════════
 Public Sub btnVerificarDOI_Click()
 
-  m_DOI.VerificarDOI(doi_prefix)
+  ' EL BOTÓN ESTÁ AL LADO DEL DOI DEL LIBRO: VERIFICA ESE. EL PREFIJO ES DE LA
+  ' EDITORIAL Y SE CARGA EN FSysAdmin (2.2.0)
+  m_DOI.VerificarDOI(doi_libro)
 
 End
 
@@ -559,13 +578,6 @@ End
 Public Sub btnSubdisciplina_Click()
 
   FTXTextendido.OriginalTextBox = subdisciplina
-  FTXTextendido.ShowModal
-
-End
-
-Public Sub btnDireccionEditorial_Click()
-
-  FTXTextendido.OriginalTextBox = direccion_editorial
   FTXTextendido.ShowModal
 
 End
@@ -1685,5 +1697,304 @@ Public Sub SeleccionarFormatoPorId(iId As Integer)
   ' --- 3. NO ENCONTRADO → ÍNDICE 0 (DEFENSIVO) ---
   formato_pdf.Index = 0
   descripcion_formato_pdf.Text = ""
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' EDITORIALES DEL LIBRO (libro_editorial, 2.2.0; claude/crossref-libros.md, F1)
+' LAS EDITORIALES NO SE DAN DE ALTA ACÁ: LAS CARGA EL EDITOR EN FSysAdmin,
+' COMO LAS COLECCIONES. ACÁ SOLO SE ELIGEN Y SE ORDENAN
+' ════════════════════════════════════════════════════════════════════════════
+
+' ============================================
+' Función   : PoblarComboEditoriales
+' Propósito : Llena el combo con todas las editoriales, por nombre
+' Parámetros: (ninguno)
+' Retorna   : nada
+' ============================================
+Private Sub PoblarComboEditoriales()
+
+  Dim hRes As Result
+
+  ' --- 1. RESET DEL COMBO Y SU ARREGLO PARALELO ---
+  $aIdsEditorialesCombo.Clear()
+  cmbEditorialLibro.Clear
+
+  ' --- 2. CONSULTA (EL MÓDULO YA AVISÓ SI FALLÓ) ---
+  hRes = m_EditorialLibro.Disponibles()
+  If Not hRes Then Return
+
+  ' --- 3. COMBO Y ARREGLO EN PARALELO ---
+  While hRes.Available
+    cmbEditorialLibro.Add(CStr(hRes["nombre"]))
+    $aIdsEditorialesCombo.Add(CInt(hRes["id_editorial"]))
+    hRes.MoveNext
+  Wend
+
+  If cmbEditorialLibro.Count > 0 Then cmbEditorialLibro.Index = 0
+
+End
+
+' ============================================
+' Función   : CargarEditoriales
+' Propósito : Llena la lista con las editoriales del libro, en su orden. La
+'             llama m_Metadatos.CargarMetadatosDeLibro
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+' Retorna   : Boolean — True si se leyeron
+' ============================================
+Public Function CargarEditoriales(iIdLibro As Integer) As Boolean
+
+  Dim hRes As Result
+
+  ' --- 1. RESET: AL CAMBIAR DE LIBRO NO QUEDAN LAS DEL ANTERIOR ---
+  $aIdsEditorialesLibro.Clear()
+  $aNombresEditorialesLibro.Clear()
+
+  ' --- 2. CONSULTA (EL MÓDULO YA AVISÓ SI FALLÓ) ---
+  hRes = m_EditorialLibro.DelLibro(iIdLibro)
+  If Not hRes Then
+    RedibujarEditoriales(-1)
+    Return False
+  Endif
+
+  ' --- 3. ARREGLOS EN EL ORDEN DEL LIBRO ---
+  While hRes.Available
+    $aIdsEditorialesLibro.Add(CInt(hRes["id_editorial"]))
+    $aNombresEditorialesLibro.Add(CStr(hRes["nombre"]))
+    hRes.MoveNext
+  Wend
+
+  RedibujarEditoriales(-1)
+  Return True
+
+End
+
+' ============================================
+' Función   : EditorialesElegidas
+' Propósito : Las editoriales de la lista, en orden, para grabarlas. La llama
+'             m_Metadatos.GuardarMetadatosDeLibro
+' Parámetros: (ninguno)
+' Retorna   : Integer[] — copia de los id_editorial; la primera es la principal
+' ============================================
+Public Function EditorialesElegidas() As Integer[]
+
+  ' COPIA: EL MÓDULO NO TOCA EL ARREGLO DEL FORMULARIO (LOS ARREGLOS VAN POR
+  ' REFERENCIA, GV-24)
+  Return $aIdsEditorialesLibro.Copy()
+
+End
+
+' ============================================
+' Función   : btnAgregarEditorialLibro_Click
+' Propósito : Agrega al final de la lista la editorial elegida en el combo
+'             (se graba al guardar)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnAgregarEditorialLibro_Click()
+
+  Dim iIdEditorial As Integer
+
+  ' --- 1. ELECCIÓN ---
+  If cmbEditorialLibro.Index < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay editoriales para elegir. Las carga el editor en Administración, pestaña «Editorial».")
+    Return
+  Endif
+  iIdEditorial = $aIdsEditorialesCombo[cmbEditorialLibro.Index]
+
+  ' --- 2. SIN REPETIDOS (EL UNIQUE (id_libro, id_editorial) LO RECHAZARÍA) ---
+  If $aIdsEditorialesLibro.Find(iIdEditorial) >= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Esa editorial ya está en el libro.")
+    Return
+  Endif
+
+  ' --- 3. AGREGADO ---
+  $aIdsEditorialesLibro.Add(iIdEditorial)
+  $aNombresEditorialesLibro.Add(cmbEditorialLibro.Text)
+  RedibujarEditoriales($aIdsEditorialesLibro.Count - 1)
+
+End
+
+' ============================================
+' Función   : btnQuitarEditorialLibro_Click
+' Propósito : Quita de la lista la editorial elegida (se graba al guardar)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarEditorialLibro_Click()
+
+  Dim iFila As Integer
+
+  iFila = lstEditorialesLibro.Index
+  If iFila < 0 Then Return
+  $aIdsEditorialesLibro.Remove(iFila)
+  $aNombresEditorialesLibro.Remove(iFila)
+  RedibujarEditoriales(-1)
+
+End
+
+' ============================================
+' Función   : btnSubirEditorialLibro_Click
+' Propósito : Sube un lugar la editorial elegida. Llevarla al primero la hace
+'             la principal
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubirEditorialLibro_Click()
+
+  MoverEditorial(-1)
+
+End
+
+' ============================================
+' Función   : btnBajarEditorialLibro_Click
+' Propósito : Baja un lugar la editorial elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBajarEditorialLibro_Click()
+
+  MoverEditorial(1)
+
+End
+
+' ============================================
+' Función   : MoverEditorial
+' Propósito : Intercambia la editorial elegida con la vecina: el orden de la
+'             lista es el del libro
+' Parámetros: iPaso As Integer — -1 sube, 1 baja
+' Retorna   : nada
+' ============================================
+Private Sub MoverEditorial(iPaso As Integer)
+
+  Dim iFila As Integer
+  Dim iDestino As Integer
+  Dim iId As Integer
+  Dim sTexto As String
+
+  ' --- 1. POSICIONES VÁLIDAS ---
+  iFila = lstEditorialesLibro.Index
+  If iFila < 0 Then Return
+  iDestino = iFila + iPaso
+  If iDestino < 0 Or iDestino >= $aIdsEditorialesLibro.Count Then Return
+
+  ' --- 2. INTERCAMBIO EN LOS DOS ARREGLOS PARALELOS ---
+  iId = $aIdsEditorialesLibro[iFila]
+  $aIdsEditorialesLibro[iFila] = $aIdsEditorialesLibro[iDestino]
+  $aIdsEditorialesLibro[iDestino] = iId
+  sTexto = $aNombresEditorialesLibro[iFila]
+  $aNombresEditorialesLibro[iFila] = $aNombresEditorialesLibro[iDestino]
+  $aNombresEditorialesLibro[iDestino] = sTexto
+
+  ' --- 3. LA LISTA SIGUE A LA EDITORIAL MOVIDA ---
+  RedibujarEditoriales(iDestino)
+
+End
+
+' ============================================
+' Función   : RedibujarEditoriales
+' Propósito : Vuelve a llenar la lista desde $aNombresEditorialesLibro, que
+'             es la fuente: así la lista y los id no se desalinean nunca. La
+'             primera lleva la marca de principal
+' Parámetros: iElegido As Integer — fila a dejar elegida; -1 ninguna
+' Retorna   : nada
+' ============================================
+Private Sub RedibujarEditoriales(iElegido As Integer)
+
+  Dim aTextos As String[]
+
+  aTextos = $aNombresEditorialesLibro.Copy()
+  If aTextos.Count > 0 Then aTextos[0] &= "  (principal)"
+  lstEditorialesLibro.List = aTextos
+  If iElegido >= 0 Then lstEditorialesLibro.Index = iElegido
+
+End
+
+' ============================================
+' Función   : MostrarDeposito
+' Propósito : Carga en el formulario la fecha del depósito en Crossref leída
+'             de la base. La llama m_Metadatos.CargarMetadatosDeLibro
+' Parámetros: vFecha As Variant — libros_md.crossref_fecha_deposito (Date o
+'             Null)
+' Retorna   : nada
+' ============================================
+Public Sub MostrarDeposito(vFecha As Variant)
+
+  $vFechaDeposito = vFecha
+  RedibujarDeposito()
+
+End
+
+' ============================================
+' Función   : FechaDeposito
+' Propósito : La fecha del depósito tal como quedó en el formulario, para
+'             grabarla. La llama m_Metadatos.GuardarMetadatosDeLibro
+' Parámetros: ninguno
+' Retorna   : Variant — Date, o Null si el libro no está depositado
+' ============================================
+Public Function FechaDeposito() As Variant
+
+  Return $vFechaDeposito
+
+End
+
+' ============================================
+' Función   : btnMarcarDeposito_Click
+' Propósito : Registra que el libro se depositó hoy en Crossref. Se graba con
+'             «Guardar»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnMarcarDeposito_Click()
+
+  ' --- 1. YA DEPOSITADO: CAMBIAR LA FECHA ES OTRO DEPÓSITO ---
+  If Not IsNull($vFechaDeposito) Then
+    m_Sonido.sonar("Question")
+    If Message.Question("El libro figura depositado el " & Format($vFechaDeposito, "dd/mm/yyyy") & "." & gb.NewLine &
+        "¿Registrar un nuevo depósito con la fecha de hoy?", "Registrar", "Cancelar") <> 1 Then Return
+    Endif
+
+    ' --- 2. LA MARCA ---
+    ' SOLO LA FECHA: DATE(Now) SIN HORA, COMO LA COLUMNA (DATE)
+    $vFechaDeposito = Date(Now)
+    RedibujarDeposito()
+
+End
+
+' ============================================
+' Función   : btnQuitarDeposito_Click
+' Propósito : Quita la marca de depósito en Crossref (se graba con «Guardar»).
+'             Es el camino para renombrar una pieza con DOI (F4)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarDeposito_Click()
+
+  If IsNull($vFechaDeposito) Then Return
+  m_Sonido.sonar("Question")
+  If Message.Question("Sin la marca, gbpublisher deja de avisar si las páginas cambian" & gb.NewLine &
+      "y permite renombrar piezas con DOI." & gb.NewLine & gb.NewLine &
+      "¿Quitar la marca de depósito?", "Quitar", "Cancelar") <> 1 Then Return
+    $vFechaDeposito = Null
+    RedibujarDeposito()
+
+End
+
+' ============================================
+' Función   : RedibujarDeposito
+' Propósito : Muestra la fecha del depósito, o nada (queda el Placeholder)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub RedibujarDeposito()
+
+  If IsNull($vFechaDeposito) Then
+    txtFechaDeposito.Text = ""
+  Else
+    txtFechaDeposito.Text = "depositado el " & Format($vFechaDeposito, "dd/mm/yyyy")
+  Endif
+  btnQuitarDeposito.Enabled = Not IsNull($vFechaDeposito)
 
 End

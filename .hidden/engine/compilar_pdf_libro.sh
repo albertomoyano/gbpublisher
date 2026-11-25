@@ -37,6 +37,26 @@
 # compilar_latex_comun.sh, COMPARTIDA CON compilar_pdfa_libro.sh. ESTE SCRIPT
 # SOLO DICE QUÉ SE COMPILA (latex/main.tex), DÓNDE QUEDAN LOS AUXILIARES
 # (latex/) Y CÓMO SE ENTREGA EL PDF.
+#
+# LA PAGINACIÓN (claude/crossref-libros.md, F3, decisión de Alberto del
+# 25/11/2026). Las páginas nacen en la composición y vuelven a la base: al
+# terminar, este script escribe tmp/paginacion-libro.tsv y Gambas lo guarda.
+# Es el ÚNICO escritor de esas páginas: los formularios ya no las graban.
+#
+#   # comentario (nombra las columnas)
+#   (libro)       -   -     -     148      el total: páginas físicas del PDF
+#                                          según pdfinfo, cortesía incluida
+#                                          (la definición de SC-25)
+#   a-01-CAP01    26  1     20    20       por pieza con folio: archivo,
+#                                          id_capitulo, inicio, fin, páginas
+#                                          (engine/paginacion_libro.pl)
+#
+#   SE ESCRIBE SOLO SI EL PDF SE ENTREGÓ Y TODAS LAS PIEZAS DEL main.tex SE
+#   PUDIERON LEER. CON UN \includeonly SIN COMENTAR EN EL main.tex NO SE
+#   ESCRIBE: LOS .aux DE LAS PIEZAS QUE NO SE COMPUSIERON SON VIEJOS. EN LOS
+#   DOS CASOS ES AVISO (CÓDIGO 3): EL PDF ESTÁ, LO QUE FALTA SON LAS PÁGINAS.
+#   UN paginacion-libro.tsv VIEJO SE BORRA AL EMPEZAR: GAMBAS NO PUEDE LEER
+#   EL DE UNA CORRIDA ANTERIOR.
 # ============================================================================
 
 set -uo pipefail
@@ -83,6 +103,11 @@ ARCHIVO_BIB="$DIR_PROYECTO/referencias/$NOMBRE_BIB"
 DIR_SALIDA="$DIR_PROYECTO/salidas/pdf"
 PDF_FINAL="$DIR_SALIDA/$NOMBRE_SALIDA.pdf"
 HAY_BIB=0
+# LA PAGINACIÓN QUE LEE GAMBAS (VER EL ENCABEZADO)
+TSV_PAGINACION="$DIR_PROYECTO/tmp/paginacion-libro.tsv"
+
+# UNO VIEJO NO PUEDE SOBREVIVIR A ESTA CORRIDA, SALGA BIEN O MAL
+rm -f "$TSV_PAGINACION"
 
 # --- 4. PREPARACIÓN DE LOS ARCHIVOS LaTeX ---
 # PRIMERO, Y EN EL MISMO LANZAMIENTO: EL COLOREO Y LA TRANSFORMACIÓN DE CADA
@@ -109,6 +134,9 @@ paso "verificando el entorno"
 
 verificar_herramientas_latex
 verificar_bib
+# LA PAGINACIÓN: perl LA LEE DE LOS .aux Y pdfinfo CUENTA LAS PÁGINAS
+requerir_comandos perl pdfinfo
+[[ -f "$DIR_ENGINE/paginacion_libro.pl" ]] || morir "Falta $DIR_ENGINE/paginacion_libro.pl: reinstalá gbpublisher"
 
 printf '\n  %-14s %s\n' "Proyecto:" "$DIR_PROYECTO"
 printf '  %-14s %s\n'   "Salida:"   "$NOMBRE_SALIDA.pdf"
@@ -128,6 +156,39 @@ mkdir -p "$DIR_SALIDA" || morir "No se pudo crear $DIR_SALIDA"
 mv -f "$ARCHIVO_PDF" "$PDF_FINAL" || morir "No se pudo mover el PDF a salidas/pdf"
 
 resumen_pdf "$PDF_FINAL"
+
+# --- 8. LA PAGINACIÓN PARA LA BASE ---
+# DESPUÉS DE ENTREGAR EL PDF: SI ALGO FALLA ACÁ, EL PDF ESTÁ IGUAL Y ES AVISO
+paso "leyendo las páginas de cada pieza"
+if grep -qE '^[^%]*\\includeonly' "$ARCHIVO_TEX"; then
+    aviso "el main.tex tiene un \\includeonly: la composición es parcial y las páginas no se guardan"
+else
+    temporal="$TSV_PAGINACION.tmp"
+    mkdir -p "$DIR_PROYECTO/tmp" || morir "No se pudo crear $DIR_PROYECTO/tmp"
+    total="$(pdfinfo "$PDF_FINAL" 2>/dev/null | grep -oP '^Pages:\s+\K\d+')"
+    filas="$(perl "$DIR_ENGINE/paginacion_libro.pl" "$ARCHIVO_TEX" "$DIR_AUX" 2>"$temporal.err")"
+    codigo=$?
+    # LAS PÁGINAS ESPECIALES NO TIENEN FOLIO: SE NOMBRAN Y NO CUENTAN
+    grep -P '^especial\t' "$temporal.err" | cut -f2 | while read -r pieza; do
+        tenue "$pieza: página especial, sin folio"
+    done
+    if (( codigo != 0 )) || [[ -z "$total" ]]; then
+        grep -vP '^especial\t' "$temporal.err" | cut -f2,3 | sed 's/\t/: /; s/^/     /'
+        [[ -z "$total" ]] && echo "     pdfinfo no devolvió la cantidad de páginas del PDF"
+        aviso "no se pudieron leer las páginas: no se guardan en la base"
+    else
+        # if Y NO &&: UN && FALSO AL FINAL DEL GRUPO LE DARÍA 1 AL GRUPO
+        # ENTERO Y EL mv NO SE HARÍA (GV-23)
+        {
+            printf '# archivo\tid_capitulo\tinicio\tfin\tpaginas\n'
+            printf '(libro)\t-\t-\t-\t%s\n' "$total"
+            if [[ -n "$filas" ]]; then printf '%s\n' "$filas"; fi
+        } > "$temporal" || morir "No se pudo escribir tmp/paginacion-libro.tsv"
+        mv -f "$temporal" "$TSV_PAGINACION" || morir "No se pudo escribir tmp/paginacion-libro.tsv"
+        ok "tmp/paginacion-libro.tsv: $(grep -c . <<< "$filas") pieza(s) con folio; el libro, $total página(s)"
+    fi
+    rm -f "$temporal" "$temporal.err"
+fi
 
 echo
 terminar

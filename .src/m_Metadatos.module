@@ -127,7 +127,10 @@ Public Function CargarMetadatosDeLibro() As Boolean
     .isbn_impreso.Text = NullToString(resultado["isbn_impreso"])
     .isbn_electronico.Text = NullToString(resultado["isbn_electronico"])
     .doi_libro.Text = NullToString(resultado["doi_libro"])
-    .doi_prefix.Text = NullToString(resultado["doi_prefix"])
+    ' EL DEPÓSITO EN CROSSREF (2.3.0): LO MARCA LA PERSONA EN EL FORMULARIO
+    .MostrarDeposito(resultado["crossref_fecha_deposito"])
+    ' EL PREFIJO DOI ES DE LA EDITORIAL (EL MIEMBRO DE CROSSREF): SE CARGA EN
+    ' FSysAdmin, NO EN EL LIBRO (2.2.0)
     .handle_prefix.Text = NullToString(resultado["handle_prefix"])
     .identificador_scielo.Text = NullToString(resultado["identificador_scielo"])
 
@@ -174,14 +177,9 @@ Public Function CargarMetadatosDeLibro() As Boolean
     SeleccionarComboEnum(.estado_publicacion, NullToString(resultado["estado_publicacion"]), aEstadoPub)
     SeleccionarComboEnum(.estado_libro, NullToString(resultado["estado_libro"]), aEstadoLibro)
 
-    ' EDITORIAL
-    .editorial.Text = NullToString(resultado["editorial"])
-    .institucion_editora.Text = NullToString(resultado["institucion_editora"])
-    .ror_editorial.Text = NullToString(resultado["ror_editorial"])
-    .ciudad_publicacion.Text = NullToString(resultado["ciudad_publicacion"])
-    ' PAÍS POR VALOR: NOMBRE Y CÓDIGO ISO 3166-1 (m_Paises, 1.31.0)
-    m_Paises.LlenarCombo(m_ConexionBD.mConn, .cmbPaisPublicacion, NullToString(resultado["pais_publicacion_codigo"]), NullToString(resultado["pais_publicacion"]))
-    .direccion_editorial.Text = NullToString(resultado["direccion_editorial"])
+    ' EDITORIAL: LOS DATOS SON DE LA EDITORIAL (libro_editorial, 2.2.0; SE
+    ' CARGAN EN EL APARTADO 5). DEL LIBRO QUEDA SOLO EL CORREO, QUE REEMPLAZA
+    ' AL DE LA PRINCIPAL (DEPOSITANTE DE CROSSREF)
     .email_editorial.Text = NullToString(resultado["email_editorial"])
 
     ' DISCIPLINAS
@@ -290,6 +288,9 @@ Public Function CargarMetadatosDeLibro() As Boolean
 
   ' --- 4. PUNTOS DE VENTA (TABLA libro_venta, 1.21.0) ---
   If Not m_VentaLibro.Cargar(resultado["id_libro"]) Then Return False
+
+  ' --- 5. EDITORIALES DEL LIBRO (TABLA libro_editorial, 2.2.0) ---
+  If Not FMetadatosLibro.CargarEditoriales(resultado["id_libro"]) Then Return False
 
   Return True
 
@@ -423,8 +424,8 @@ Public Function GuardarMetadatosDeLibro() As Boolean
   ' CAMPOS NUMÉRICOS: SOLO DÍGITOS (GV-96). ANTES IBAN COMO TEXTO Y UNO CON
   ' PUNTO O COMA LO RECHAZABA MySQL CON UN ERROR DE TIPO
   If Not m_FuncionesGenericas.ControlarEnteros(
-      [FMetadatosLibro.numero_edicion.Text, FMetadatosLibro.numero_paginas.Text, FMetadatosLibro.ano_publicacion.Text, FMetadatosLibro.periodo_embargo.Text],
-      ["Número de edición", "Número de páginas", "Año de publicación", "Período de embargo"]) Then Return False
+      [FMetadatosLibro.numero_edicion.Text, FMetadatosLibro.ano_publicacion.Text, FMetadatosLibro.periodo_embargo.Text],
+      ["Número de edición", "Año de publicación", "Período de embargo"]) Then Return False
 
     ' DESTINO DE LA SALIDA HTML: LA DIRECCIÓN DEL PORTAL, CON LAS REGLAS DE
     ' LOS CHECK DE libros_md (1.22.0)
@@ -515,7 +516,7 @@ Public Function GuardarMetadatosDeLibro() As Boolean
       resultado!isbn_impreso = StringToNull(.isbn_impreso.Text)
       resultado!isbn_electronico = StringToNull(.isbn_electronico.Text)
       resultado!doi_libro = StringToNull(.doi_libro.Text)
-      resultado!doi_prefix = StringToNull(.doi_prefix.Text)
+      resultado!crossref_fecha_deposito = .FechaDeposito()
       resultado!handle_prefix = StringToNull(.handle_prefix.Text)
       resultado!identificador_scielo = StringToNull(.identificador_scielo.Text)
 
@@ -531,7 +532,8 @@ Public Function GuardarMetadatosDeLibro() As Boolean
       resultado!lugar_bibliografia = ObtenerEnumDeCombo(.lugar_bibliografia, aLugarBib)
       resultado!edicion = StringToNull(.edicion.Text)
       resultado!numero_edicion = m_FuncionesGenericas.EnteroDeTexto(.numero_edicion.Text)
-      resultado!numero_paginas = m_FuncionesGenericas.EnteroDeTexto(.numero_paginas.Text)
+      ' numero_paginas NO SE ESCRIBE: LO ESCRIBE LA COMPOSICIÓN DEL PDF (UN SOLO
+      ' ESCRITOR; claude/crossref-libros.md, F3). EL CAMPO ES DE SOLO LECTURA
 
       ' COLECCIÓN Y SERIE (FK) — IDs DESDE LOS HELPERS DEL FORMULARIO
       Dim iIdCol As Integer = .ObtenerIdColeccionSeleccionada()
@@ -565,16 +567,8 @@ Public Function GuardarMetadatosDeLibro() As Boolean
       resultado!estado_publicacion = ObtenerEnumDeCombo(.estado_publicacion, aEstadoPub)
       resultado!estado_libro = ObtenerEnumDeCombo(.estado_libro, aEstadoLibro)
 
-      ' EDITORIAL
-      resultado!editorial = StringToNull(.editorial.Text)
-      resultado!institucion_editora = StringToNull(.institucion_editora.Text)
-      resultado!ror_editorial = StringToNull(.ror_editorial.Text)
-      resultado!ciudad_publicacion = StringToNull(.ciudad_publicacion.Text)
-      resultado!pais_publicacion = StringToNull(m_Paises.NombreDelCombo(.cmbPaisPublicacion))
-      ' NULL Y NO «»: LA CLAVE FORÁNEA RECHAZA UN CÓDIGO VACÍO (StringToNull
-      ' DEVUELVE «»)
-      resultado!pais_publicacion_codigo = m_Revistas.NuloSiVacio(m_Paises.CodigoDelCombo(.cmbPaisPublicacion))
-      resultado!direccion_editorial = StringToNull(.direccion_editorial.Text)
+      ' EDITORIAL: LAS EDITORIALES VAN A libro_editorial (APARTADO 5.c); DEL
+      ' LIBRO QUEDA SOLO EL CORREO QUE REEMPLAZA AL DE LA PRINCIPAL
       resultado!email_editorial = StringToNull(.email_editorial.Text)
 
       ' DISCIPLINAS
@@ -660,6 +654,10 @@ Public Function GuardarMetadatosDeLibro() As Boolean
     ' DESPUÉS DEL LIBRO: SI EL REGISTRO SE ACABA DE CREAR, RECIÉN AHORA TIENE id_libro
     verificacion = m_ConexionBD.mConn.Exec("SELECT id_libro FROM libros_md WHERE id_proyecto = &1", idProyecto)
     If Not m_VentaLibro.Guardar(verificacion!id_libro) Then Return False
+
+    ' --- 5.c EDITORIALES (TABLA libro_editorial, 2.2.0) ---
+    ' TAMBIÉN DESPUÉS DEL LIBRO, POR EL MISMO MOTIVO. REEMPLAZO ENTERO (SC-73)
+    If Not m_EditorialLibro.Guardar(verificacion!id_libro, FMetadatosLibro.EditorialesElegidas()) Then Return False
 
     m_Sonido.sonar("Info")
     Message.Info("Metadatos de libro guardados correctamente.")
@@ -753,10 +751,8 @@ Public Sub CargarMetadatosDeCapitulo(iIdCapitulo As Integer)
 
     ' DOI E IDENTIFICADORES
     .doi.Text = CStr(hRes["doi"])
-    .crossref_estado.Text = CStr(hRes["crossref_estado"])
-    If Not IsNull(hRes["crossref_fecha_deposito"]) Then
-      .crossref_fecha_deposito.Value = hRes["crossref_fecha_deposito"]
-    Endif
+    ' EL DEPÓSITO EN CROSSREF ES DEL LIBRO, NO DE CADA PIEZA (libros_md,
+    ' 2.3.0): capitulos.crossref_* YA NO SE LEEN NI SE ESCRIBEN (2.4.0 LAS BORRA)
     .elocation_id.Text = CStr(hRes["elocation_id"])
     .pagina_inicio.Text = CStr(hRes["pagina_inicio"])
     .pagina_fin.Text = CStr(hRes["pagina_fin"])
@@ -896,6 +892,7 @@ Public Sub GuardarMetadatosDeCapitulo()
   Dim sProblema As String
   Dim sNombreNuevo As String
   Dim sNombreAnterior As String
+  Dim hDeposito As Result
 
   ' --- 1. VALIDACIÓN: HAY CAPÍTULO ACTIVO? ---
   iIdCap = FMetadatosCapitulos.id_capitulo.Value
@@ -927,9 +924,9 @@ Public Sub GuardarMetadatosDeCapitulo()
 
   ' --- 2c. CAMPOS NUMÉRICOS: SOLO DÍGITOS (GV-96) ---
   If Not m_FuncionesGenericas.ControlarEnteros(
-      [FMetadatosCapitulos.numero_paginas.Text, FMetadatosCapitulos.numero_figuras.Text, FMetadatosCapitulos.numero_tablas.Text,
+      [FMetadatosCapitulos.numero_figuras.Text, FMetadatosCapitulos.numero_tablas.Text,
       FMetadatosCapitulos.numero_ecuaciones.Text, FMetadatosCapitulos.copyright_year.Text],
-      ["Número de páginas", "Número de figuras", "Número de tablas", "Número de ecuaciones", "Año del copyright"]) Then Return
+      ["Número de figuras", "Número de tablas", "Número de ecuaciones", "Año del copyright"]) Then Return
 
     ' --- 3. ABRIR EL REGISTRO EN MODO EDICIÓN ---
     Try $result = m_ConexionBD.mConn.Edit("capitulos", "id_capitulo = " & Str(iIdCap))
@@ -960,6 +957,35 @@ Public Sub GuardarMetadatosDeCapitulo()
           Message.Warning(sProblema)
           FMetadatosCapitulos.nombre_archivo.SetFocus()
           Return
+        Endif
+      Endif
+    Endif
+
+    ' --- 3c. UNA PIEZA CON DOI DE UN LIBRO DEPOSITADO NO SE RENOMBRA ---
+    ' SU PÁGINA h-<nombre_archivo>.html ES LA URL A LA QUE RESUELVE EL DOI
+    ' (claude/crossref-libros.md, F4): RENOMBRARLA DEJA EL DOI APUNTANDO A UNA
+    ' PÁGINA QUE YA NO EXISTE. EL CAMINO DELIBERADO: QUITAR LA MARCA DE
+    ' DEPÓSITO EN EL LIBRO, RENOMBRAR Y REDEPOSITAR. If ANIDADOS POR EL Null
+    ' (RC-GM-17)
+    If sNombreAnterior <> "" And If sNombreNuevo <> sNombreAnterior Then
+      If Not IsNull($result!doi) Then
+        Try hDeposito = m_ConexionBD.mConn.Exec("SELECT crossref_fecha_deposito FROM libros_md WHERE id_libro = &1", $result!id_libro)
+        If Error Then
+          m_Sonido.sonar("Error")
+          Message.Error("No se pudo leer el depósito del libro:" & Chr(10) & Error.Text)
+          Return
+        Endif
+        If hDeposito.Available Then
+          If Not IsNull(hDeposito!crossref_fecha_deposito) Then
+            m_Sonido.sonar("Warning")
+            Message.Warning("«" & sNombreAnterior & "» tiene DOI y el libro está depositado en Crossref" & Chr(10) &
+              "desde el " & Format(hDeposito!crossref_fecha_deposito, "dd/mm/yyyy") & ": su página h-" & sNombreAnterior & ".html" & Chr(10) &
+              "es la dirección del DOI y no se puede renombrar." & Chr(10) & Chr(10) &
+              "Para renombrarla: quitá la marca de depósito en los metadatos del libro," & Chr(10) &
+              "renombrá, regenerá el HTML y volvé a depositar.")
+            FMetadatosCapitulos.nombre_archivo.Text = sNombreAnterior
+            Return
+          Endif
         Endif
       Endif
     Endif
@@ -996,12 +1022,10 @@ Public Sub GuardarMetadatosDeCapitulo()
 
       ' DOI E IDENTIFICADORES
       $result!doi = If(.doi.Text <> "", .doi.Text, Null)
-      $result!crossref_estado = .crossref_estado.Text
-      $result!crossref_fecha_deposito = .crossref_fecha_deposito.Value
       $result!elocation_id = If(.elocation_id.Text <> "", .elocation_id.Text, Null)
-      $result!pagina_inicio = If(.pagina_inicio.Text <> "", .pagina_inicio.Text, Null)
-      $result!pagina_fin = If(.pagina_fin.Text <> "", .pagina_fin.Text, Null)
-      $result!numero_paginas = m_FuncionesGenericas.EnteroDeTexto(.numero_paginas.Text)
+      ' pagina_inicio, pagina_fin Y numero_paginas NO SE ESCRIBEN: LOS ESCRIBE LA
+      ' COMPOSICIÓN DEL PDF (UN SOLO ESCRITOR; claude/crossref-libros.md, F3).
+      ' LOS CAMPOS SON DE SOLO LECTURA
 
       ' IDIOMA Y FECHAS EDITORIALES
       $result!idioma_capitulo = .idioma_capitulo.Text

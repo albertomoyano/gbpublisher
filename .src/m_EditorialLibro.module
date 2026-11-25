@@ -1,0 +1,173 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_EditorialLibro
+' Propósito : Las editoriales de cada libro (tabla libro_editorial, esquema
+'             2.2.0; claude/crossref-libros.md, F1): las que se eligen en
+'             FMetadatosLibro y las que leen las salidas. Admite coediciones:
+'             la de orden 1 es la principal, la que deposita en Crossref y da
+'             el lugar de edición.
+'             LAS EDITORIALES NO SE DAN DE ALTA ACÁ: LAS CARGA EL EDITOR EN LA
+'             PESTAÑA «Editorial» DE FSysAdmin (m_Editorial), COMO LAS
+'             COLECCIONES. EL LIBRO SOLO ELIGE ENTRE LAS QUE EXISTEN.
+' Conexión  : m_ConexionBD.mConn (la de la sesión de trabajo).
+' Requiere  : esquema 2.2.0 (libro_editorial).
+' Dependencias: m_ConexionBD, m_Sonido, CEditorialesLibro.
+' ==============================================================================
+
+' EL MOTIVO DEL ÚLTIMO FALLO DE Leer Y Resumen, QUE NO AVISAN POR SU CUENTA:
+' LOS LLAMAN LAS SALIDAS, Y CADA UNA INFORMA A SU MANERA
+Private $sUltimoError As String = ""
+
+' ============================================
+' Función   : UltimoError
+' Propósito : El motivo del último fallo de Leer o Resumen
+' Parámetros: (ninguno)
+' Retorna   : String — "" si no hubo fallo
+' ============================================
+Public Function UltimoError() As String
+
+  Return $sUltimoError
+
+End
+
+' ============================================
+' Función   : Disponibles
+' Propósito : Las editoriales que se pueden elegir para un libro, por nombre
+' Parámetros: (ninguno)
+' Retorna   : Result — id_editorial, nombre; Null si falló (ya se informó)
+' ============================================
+Public Function Disponibles() As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_editorial, nombre FROM editorial ORDER BY nombre")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las editoriales:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : DelLibro
+' Propósito : Las editoriales de un libro, en su orden, para el formulario
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+' Retorna   : Result — id_editorial, nombre; Null si falló (ya se informó)
+' ============================================
+Public Function DelLibro(iIdLibro As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT le.id_editorial, e.nombre " &
+    "FROM libro_editorial le JOIN editorial e ON e.id_editorial = le.id_editorial " &
+    "WHERE le.id_libro = &1 ORDER BY le.orden", iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las editoriales del libro (¿falta la actualización de esquema 2.2.0?):" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : Guardar
+' Propósito : Reescribe las editoriales del libro con las de la lista, en su
+'             orden, todo o nada (una transacción, SC-73)
+' Parámetros: iIdLibro As Integer — el libro (ya guardado en libros_md)
+'             aIds As Integer[] — id_editorial en orden; la primera es la
+'             principal. Vacío: el libro queda sin editorial
+' Retorna   : Boolean — True si se guardaron
+' ============================================
+Public Function Guardar(iIdLibro As Integer, aIds As Integer[]) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sError As String
+  Dim i As Integer
+
+  ' --- 2. TRANSACCIÓN ---
+  ' REEMPLAZO ENTERO (SC-73): EL DELETE Y LOS INSERT VAN JUNTOS. COMO SE
+  ' BORRA TODO ANTES, REORDENAR NO CHOCA CON EL UNIQUE (id_libro, orden)
+  m_ConexionBD.mConn.Begin()
+
+  Try m_ConexionBD.mConn.Exec("DELETE FROM libro_editorial WHERE id_libro = &1", iIdLibro)
+  If Error Then sError = Error.Text
+
+  ' EL ORDEN EMPIEZA EN 1: EL CHECK chk_libro_editorial_orden NO ADMITE 0
+  For i = 0 To aIds.Max
+    If sError <> "" Then Break
+    Try m_ConexionBD.mConn.Exec("INSERT INTO libro_editorial (id_libro, id_editorial, orden) VALUES (&1, &2, &3)", iIdLibro, aIds[i], i + 1)
+    If Error Then sError = Error.Text
+  Next
+
+  ' --- 3. CONFIRMACIÓN, O NADA A MEDIAS ---
+  ' EL TEXTO DEL ERROR SE GUARDA ANTES: Rollback PUEDE PISAR Error
+  If sError <> "" Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron guardar las editoriales del libro:" & gb.NewLine & sError)
+    Return False
+  Endif
+
+  m_ConexionBD.mConn.Commit()
+  Return True
+
+End
+
+' ============================================
+' Función   : Leer
+' Propósito : Los datos completos de las editoriales de un libro, en su orden,
+'             para el <info> del canónico (m_XML)
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+' Retorna   : Result — orden y todas las columnas de editorial; Null si falló,
+'             con el motivo en UltimoError() (no avisa: avisa el llamador)
+' ============================================
+Public Function Leer(iIdLibro As Integer) As Result
+
+  Dim rDatos As Result
+
+  $sUltimoError = ""
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT le.orden, e.* " &
+    "FROM libro_editorial le JOIN editorial e ON e.id_editorial = le.id_editorial " &
+    "WHERE le.id_libro = &1 ORDER BY le.orden", iIdLibro)
+  If Error Then
+    $sUltimoError = "No se pudieron leer las editoriales del libro: " & Error.Text
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : Resumen
+' Propósito : Los nombres de las editoriales del libro y la ciudad de la
+'             principal, para el texto legal, el PDF y el EPUB
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+' Retorna   : CEditorialesLibro — vacío si el libro no tiene editorial; Null
+'             si falló, con el motivo en UltimoError()
+' ============================================
+Public Function Resumen(iIdLibro As Integer) As CEditorialesLibro
+
+  Dim rDatos As Result
+  Dim oRes As New CEditorialesLibro
+
+  ' --- 1. LECTURA ---
+  rDatos = Leer(iIdLibro)
+  If Not rDatos Then Return Null
+
+  ' --- 2. NOMBRES EN ORDEN; LA CIUDAD, DE LA PRIMERA (LA PRINCIPAL) ---
+  While rDatos.Available
+    oRes.aNombres.Add(Trim(rDatos!nombre))
+    If oRes.aNombres.Count = 1 And If Not IsNull(rDatos!ciudad) Then oRes.sCiudad = Trim(rDatos!ciudad)
+    rDatos.MoveNext
+  Wend
+
+  Return oRes
+
+End
