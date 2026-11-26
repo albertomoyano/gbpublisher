@@ -6395,12 +6395,25 @@ EL OPF. `numero-a-epub.xsl` mira el canónico de cada artículo, como ya hacía 
 
 PROBADO EN EL CONTENEDOR (26/11/2026) con un artículo de prueba (`a-01-prueba.md` del lote): fórmulas en línea, un sistema de tres renglones, uno de nueve que cruza la página con un renglón de continuación, tres numeradas (una es un sistema), una fórmula en línea y otra en bloque en las notas, y `$3.5$`. El cuerpo, con la cadena y los argumentos de `generar_canonicos_articulos.sh`. El PDF compila con los preámbulos de la revista y el contrato común 24. El HTML y el EPUB dan 17 `<math>` y los números (1), (2), (3). El EPUB de un número con ese artículo pasa epubcheck sin errores ni advertencias.
 
+EL CATÁLOGO (26/11/2026, datos-v5-027 de gbShortcodes). Cinco shortcodes en el grupo común, todos de tipo línea, en borrador hasta probar la inserción desde el panel (decisiones de Alberto):
+
+    formula            envolver   $…$ alrededor de la selección
+    formula-bloque     plantilla  ⏎$$•$$⏎
+    sistema            plantilla  ⏎$$\begin{aligned}⏎•⏎\end{aligned}$$⏎
+    formula-numerada   plantilla  ⏎[$$•$$]{#eq-}⏎
+    variable           envolver   $\mathit{…}$ alrededor de la selección
+
+De tipo línea y no de bloque: `InsertarShortcode` arma un bloque con líneas en blanco alrededor y el ancla de cierre, y la fórmula en bloque va pegada a la frase que la introduce. Los saltos van en la apertura y el cierre; el catálogo los exporta como `\n` y gbpublisher los deshace. `variable` inserta la fórmula entera: fuera de `$…$`, pandoc lee `\mathit{ppu}` como TeX crudo y el escritor DocBook lo descarta. En una numerada, un `{#eq-}` que queda vacío frena en `formula.lua`. Se borraron `disp-formula` y `numbered-equation` (disciplinar, matemáticas), con la sintaxis vieja que hoy frena; `math-example` queda.
+
+LA DOBLE PRIMA (26/11/2026). `$d"$` (la doble prima escrita con comillas) no es TeX: texmath no lee la fórmula y `formula.lua` frenaba con un mensaje de texmath. `controles_md.lua` lo frena antes, con el arreglo a la vista (`formula_doble_prima`, error): la doble prima son dos apóstrofos, `$d''$`. Probado con el capítulo 11 de Inigo: cinco errores antes de corregir, ninguno después.
+
+LIBERADOS (26/11/2026, datos-v5-028). Alberto probó la inserción de los cinco desde el panel en un libro y en una revista: quedan liberados para los dos productos.
+
 **Relaciones:** vinculo:SC-31,vinculo:SC-32,vinculo:SC-64,vinculo:RC-DB-07,vinculo:RC-DB-03,vinculo:GV-227,vinculo:GV-228,vinculo:GV-231,vinculo:SC-40,vinculo:GV-232
 
 **PENDIENTE:** Probar en Mint con el libro Inigo: una numerada, sus remisiones y los avisos.
 Probar en Mint con una revista: un número de prueba con a-01-prueba.md (canónicos, PDF, HTML y EPUB), y ver el MathML del HTML en el navegador.
 Los sabores JATS (SciELO con packtools, Redalyc, Crossref) con <alternatives> y <label> en <disp-formula>: en su fase.
-gbShortcodes: las filas disp-formula y numbered-equation tienen la sintaxis vieja (::: {.formula} y ::: numbered-equation): rehacerlas con [$$…$$]{#eq-…} y sumar el sistema de ecuaciones como plantilla.
 RC-DB-03 dice que <equation> exige title, y el RNG de DocBook 5.2 valida un <equation> sin title (GV-229): revisar RC-DB-03.
 
 ### SC-111 — Bastardilla en los títulos de la base: el editor escribe *…*, una marca de gbpublisher que cada destino traduce, como el corte de SC-28
