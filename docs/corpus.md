@@ -828,49 +828,72 @@ La justificación de esta regla incluía además que "Gambas no interpreta secue
 
 **Relaciones:** reemplazada_por:SC-05
 
-### SC-11 — Modelo de recursos: sistema inmutable, copia local de trabajo
+### SC-11 — Modelo de recursos: el paquete se lee en su lugar; ~/.gbpublisher guarda solo lo del usuario
 
-**Estado:** vigente · **Evidencia:** inferida · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22 / Linux Mint, probado por Alberto con dos libros; gbc3 3.19 y bash en el contenedor Ubuntu 24.04 · **Verificado:** 2026-11
 
-Los recursos que la aplicación distribuye viven en dos lugares con roles distintos.
+DECISIÓN CERRADA (Alberto, 25/11/2026). Reemplaza el modelo de copia local de trabajo, vigente hasta esa fecha. Probado por Alberto en Mint con dos libros reales (Jensen y Duek).
 
-`/usr/share/gbpublisher/` es la fuente de verdad INMUTABLE. Se sobrescribe por completo en cada actualización del paquete. Nadie la edita: ni el usuario ni el departamento de sistemas.
+LOS RECURSOS DEL PAQUETE SE LEEN EN SU LUGAR
 
-`~/.gbpublisher/` es la copia efectiva de trabajo. Es la que la aplicación LEE, y la única que se ajusta. NO se sobrescribe nunca. Si una actualización cambia alguno de esos archivos, se avisa para que se borren y el arranque los vuelve a escribir desde el sistema.
+Todo lo que la aplicación distribuye se lee de donde lo instala el paquete: `/usr/share/gbpublisher/` instalado, `.hidden/` del proyecto desde el IDE.
 
-La copia la realiza `m_InicioCierre.DirectorioOcultoApp()` recorriendo una lista de carpetas. Agregar una carpeta de recursos nueva OBLIGA a agregarla a esa lista; si no, la aplicación leerá del sistema y el recurso quedará fuera del modelo sin que nada lo advierta.
+- En Gambas, `m_InicioCierre.RutaRecursos()`.
+- En los scripts, `$DIR_RECURSOS`, que `comun.sh` calcula como la carpeta de arriba de `engine/` (`readlink -f` sobre el propio `comun.sh`). Sirve igual instalado y desde el IDE. Reemplaza a `DIR_GBP_LOCAL`.
+- Nunca una ruta fija a `/usr/share`: haría correr al IDE con los recursos de otra versión (SC-75).
 
-QUÉ NO SE COPIA
+Una carpeta de recursos nueva no se agrega a ninguna lista: basta con que viaje en el paquete (`ExtraFiles` del `.project`).
 
-Lo que, modificado, invalidaría algo que la aplicación afirma. Hoy: `engine/`, el motor de expresiones regulares, y las reglas compiladas de Schematron. Un informe que dice "no cumple una recomendación de JATS4R" solo se sostiene si las reglas son las que vinieron en el paquete.
+POR QUÉ SE ABANDONÓ LA COPIA
 
-La ayuda contextual (`ayudas/`, SC-24) tampoco se copia, por otra razón: en ella no hay nada que ajustar, y como la copia local no se sobrescribe, cada actualización dejaría al usuario con la ayuda vieja.
+Hasta el 25/11/2026, `~/.gbpublisher/` era la copia de trabajo: la aplicación la leía y no la sobrescribía nunca. Servía para que cada editorial ajustara sin privilegios de root.
 
-El catálogo de shortcodes (`shortcodes/`, SC-34) tampoco se copia, por la misma razón.
+El inventario de las tres instalaciones en producción dio unas 250 copias idénticas a las del paquete y ninguna personalización: las personalizaciones de salida se hacen con scripts que procesan lo que la aplicación entrega (decisión de Alberto). La copia solo producía copias viejas:
 
-`schematron/` tampoco se copia desde el 18/11/2026 (SC-97): las reglas compiladas del auditor se leen de `/usr/share/gbpublisher/schematron/compilados`, y el resto de la carpeta es de los generadores del repositorio. Estaba en la lista de copia y nadie leía la copia.
+- una hoja nueva que corrió con un script viejo de `engine/`, y Saxon frenó por un parámetro que el script no pasaba;
+- un `OpenApp.wav` nuevo que nunca llegó a la copia (30/10/2026);
+- esquemas y Schematron copiados que nadie leía (SC-97).
 
-Los sonidos de aviso (`sonido/`) tampoco se copian, por la misma razón. `m_Sonido` los lee de `m_InicioCierre.RutaRecursos()`, que desde el IDE es `.hidden/` e instalado `/usr/share/gbpublisher/`. El caso que lo motivó (30/10/2026): al pasar los sonidos de `.ogg` a `.wav`, el `OpenApp.wav` nuevo nunca llegó a la copia local, que guardaba uno anterior, y la apertura sonaba con otro sonido sin que nada lo advirtiera. La carpeta `~/.gbpublisher/sonido` de las instalaciones previas queda sin uso y no se borra.
+El cotejo al arrancar (`VerificarRecursosLocales`) existía solo para tapar eso.
 
-CONTRAPARTIDA OBLIGATORIA
+QUÉ QUEDA EN ~/.gbpublisher
 
-Todo recurso que sí se copia y que afecte lo que la aplicación afirma sobre un archivo ajeno debe poder DECLARAR si fue modificado. La comparación es directa contra `/usr/share/`, que por definición del modelo conserva siempre el original: no hace falta guardar ni versionar sumas de verificación. Es lo que hace `m_AuditarJats.EstadoRecurso()` con el catálogo de mensajes y la hoja de estilo del informe de auditoría.
+Solo lo del usuario. `DirectorioOcultoApp` crea, si faltan, `scripts/`, `editorial/latex/`, `respaldo/`, `snippets/` (SC-21), `regex/` (SC-51) y `.ips.txt`, y no copia nada. Ahí viven además `gbpublisher.conf` (SC-17), `conexion.conf` (SC-106) y `plantillas/` (SC-25).
 
-COTEJO AL ARRANCAR
+Se retiraron `VerificarRecursosLocales`, `ReemplazarRecursosLocales`, `CopiarIconosSVG` y `CopiarDirectorio`. Los nueve íconos de `fonts/*.svg` traen el color (`#2D5A8E`) puesto en el archivo: era lo único que `CopiarIconosSVG` cambiaba al copiar.
 
-`m_InicioCierre.VerificarRecursosLocales`, después de `DirectorioOcultoApp`, compara cada archivo de `xslt`, `filters`, `latex`, `assets/css`, `assets/js`, `themes` y `chart` de la copia local con su par instalado. `ott`, que entraba por el documento de referencia del ODT, salió con la salida ODT (SC-96). `chart` entró el 29/10/2026: `grafico.sh` lee la plantilla de los gráficos, Chart.js y sus fuentes de la copia local, y sin cotejo una plantilla nueva no llegaba nunca (SC-69). Si alguno difiere, lo lista y ofrece reemplazarlo: el actual se guarda en `~/.gbpublisher/respaldo/recursos-AAAAMMDD-HHMMSS/` y se copia el instalado. Un archivo que solo existe en la copia local no se mira: puede ser del usuario.
+LOS SCRIPTS DEL COMBO
 
-El caso que lo motivó: después de una actualización, una hoja nueva de la copia local corrió con un script viejo de `/usr/share/gbpublisher/engine/` y Saxon frenó por un parámetro que el script no pasaba. El caso inverso no da error: Saxon ignora un parámetro que la hoja vieja no declara, y la salida sale con la regla anterior.
+`CargarScripts` reúne los del paquete (`RutaRecursos()/scripts`) y los propios (`~/.gbpublisher/scripts`). `RutaScript(sNombre)` resuelve cuál corre: uno propio con el mismo nombre que uno del paquete lo reemplaza.
 
-Desde el IDE los recursos son los de `.hidden/`, y el cotejo avisa igual cuando el repositorio avanzó y la copia local quedó atrás.
+LA ESTÉTICA DE UNA EDITORIAL
 
-Las personalizaciones de salida en uso se hacen con scripts que procesan lo que la aplicación entrega, no editando la copia local (decisión de Alberto): una copia local distinta de la instalada es, en la práctica, una copia vieja.
+Es el único punto de ajuste de las salidas dentro de la aplicación. La carpeta es `~/.gbpublisher/editorial/latex/`.
 
-RAZÓN DEL MODELO
+- Vacía, que es el caso por defecto, se compone con la estética del paquete.
+- Con un archivo de nombre exacto `preambulo-estetica.tex` (libros) o `preambulo-revista-estetica.tex` (revistas), que son las capas de `m_InicioCierre.$aCapasEditorial`, `CopiarRecursosLatex` lo copia al `latex/` del proyecto encima del del paquete.
+- El contrato y los demás preámbulos no se reemplazan: son el acuerdo con las hojas XSLT, con versión verificada (`\gbRequiereContrato`), y una editorial que los cambiara rompería la composición sin que nada lo explicara.
+- Un archivo con otro nombre se nombra en la terminal del proyecto y no se usa: un nombre mal escrito no pasa en silencio.
 
-Divide según haya o no departamento de sistemas. Donde lo hay, los cambios se hacen sobre la copia local y se distribuyen a las estaciones; donde no lo hay, el usuario es a la vez administrador y necesita poder ajustar sin privilegios de root. En los dos casos el punto de intervención es el mismo, y la actualización del paquete nunca pisa lo ajustado.
+CONTRAPARTIDA: LO AJUSTADO SE DECLARA
 
-**Relaciones:** vinculo:SC-05,vinculo:SC-24,vinculo:SC-34,vinculo:SC-35,vinculo:GV-77,vinculo:SC-96
+La capa de la editorial llega al proyecto con una primera línea que la declara: `% gbpublisher: estética de la editorial: <ruta>` (`m_InicioCierre.MARCA_EDITORIAL`). `compilar_pdf_libro.sh` y `generar_pdf_revista.sh` la leen con `avisar_estetica_editorial` (`comun.sh`) y lo dicen en la terminal. Quien abra el proyecto años después sabe que no es la del paquete. La marca está escrita en dos lugares: un cambio va en los dos.
+
+`m_AuditarJats.EstadoRecurso` queda: el informe del auditor sigue declarando el estado del catálogo de mensajes y de su hoja. Instalado compara el archivo consigo mismo y da «original»; desde el IDE dice si `.hidden/` difiere de lo instalado.
+
+INSTALACIONES PREVIAS
+
+`limpiar-gbpublisher-local.sh` (entregado aparte; no viaja en el paquete):
+
+- Sin `--aplicar` solo muestra lo que haría. Se detiene si gbpublisher está abierto.
+- Archiva en `~/gbpublisher-respaldos/gbpublisher-local-AAAAMMDD-hhmmss.tar.gz` y verifica que el archivo tenga cada archivo antes de borrarlo.
+- Saca las carpetas copiadas (`assets auditor chart dtd filters fonts github latex llm media schemas schematron themes xslt`) y los restos `csl` y `biblatex-old`. De `scripts/`, solo las copias idénticas a los scripts del paquete.
+- No toca la configuración, la conexión, los respaldos, `regex/`, `snippets/`, `plantillas/`, `editorial/` ni los scripts propios.
+- La variable de entorno `GBP_RECURSOS`, puesta en la terminal al correrlo, lo hace comparar contra `.hidden/` del repositorio y no contra lo instalado.
+
+**Relaciones:** vinculo:SC-05,vinculo:SC-24,vinculo:SC-34,vinculo:SC-35,vinculo:GV-77,vinculo:SC-96,vinculo:SC-75,vinculo:SC-97,vinculo:SC-17,vinculo:SC-21,vinculo:SC-51,vinculo:SC-106
+
+**PENDIENTE:** Correr limpiar-gbpublisher-local.sh --aplicar en cada instalación que todavía tenga las carpetas copiadas.
 
 ### SC-12 — Editor de bibliografia: el formato de trabajo es HTML, no RTF
 
@@ -1009,7 +1032,7 @@ REPARTO
 
 TEMAS
 
-Nueve archivos `.theme` en `themes/`, junto a los `.highlight`. Entre ellos, `gbpflexoki`: derivado de Flexoki para el trabajo editorial (fondo `#FAFAF9`, itálica en púrpura, referencias y marcas de nota en negrita); `flexoki` conserva la paleta original. Se copian a `~/.gbpublisher/themes` (SC-11) y se leen desde ahí.
+Nueve archivos `.theme` en `themes/`, junto a los `.highlight`. Entre ellos, `gbpflexoki`: derivado de Flexoki para el trabajo editorial (fondo `#FAFAF9`, itálica en púrpura, referencias y marcas de nota en negrita); `flexoki` conserva la paleta original. `m_ResaltadoSintaxis` los lee de `m_InicioCierre.RutaRecursos() &/ "themes"` (SC-11); hasta el 25/11/2026 se copiaban a `~/.gbpublisher/themes`.
 
 Formato `Settings`: una sección `[Tema]` (Nombre, Orden, Fondo, Texto) y una sección por gramática (`[XML]`, `[Markdown]`), porque la misma clave significa cosas distintas en cada una: `Comment` es comentario en XML e itálica en Markdown. Cada valor es `"#RRGGBB"`, con `;bold` y `;italic` opcionales.
 
@@ -1029,7 +1052,7 @@ Abrir y colorear: 1,3 s, con `Application.Busy`. Cambiar de tema: 0,35 s.
 
 El editor principal adopta este mismo modelo, con refresco en puntos fijos (SC-18).
 
-**Relaciones:** vinculo:SC-11, vinculo:GV-46, vinculo:GV-48, vinculo:RF-10, vinculo:SC-17, vinculo:GV-44, vinculo:SC-18, vinculo:GV-54
+**Relaciones:** vinculo:SC-11, vinculo:GV-46, vinculo:GV-48, vinculo:RF-10, vinculo:SC-17, vinculo:GV-44, vinculo:SC-18, vinculo:GV-54,vinculo:GV-227
 
 ### SC-16 — El .md es autosuficiente
 
@@ -1224,7 +1247,7 @@ Son personales: cada usuario tiene sus propias lógicas de trabajo, y no hay jue
 
 ALMACENAMIENTO
 
-- Carpeta `~/.gbpublisher/snippets/`. La crea vacía `m_InicioCierre.DirectorioOcultoApp()` si no existe. NO entra en la lista de copia de SC-11, porque no hay nada que copiar desde el sistema. Si algún día existiera un juego base, recién entonces se agrega a la lista.
+- Carpeta `~/.gbpublisher/snippets/`. La crea vacía `m_InicioCierre.DirectorioOcultoApp()` si no existe. Es contenido del usuario: desde el 25/11/2026, `~/.gbpublisher` guarda solo eso (SC-11).
 - Un archivo por snippet: `<abreviatura>.txt`. El nombre del archivo es la abreviatura y el contenido es el cuerpo, literal, en UTF-8 (`File.Load` / `File.Save`, SC-02). Sin metadatos, sin índice y sin formato propio.
 - Guardar es `File.Save`, borrar es `Kill` y renombrar es `Move`. `Move` no pisa un destino existente (GV-39): renombrar hacia una abreviatura que ya existe se rechaza antes, con mensaje.
 - Al leer se quita UN salto de línea final, si lo hay: los editores externos lo agregan al guardar.
@@ -1347,7 +1370,15 @@ CADENA DE LAS SALIDAS DE REVISTAS (7 A 14/11/2026)
 
 1.23.0 (reapertura de un artículo publicado, `articulo_reapertura` y sus disparadores), 1.24.0 (`por_articulo` al final del ENUM de `revista.modelo_paginacion`: así MySQL no copia la tabla ni renumera los valores), 1.25.0 (la fila `disponibilidad_datos` de `tipo_declaracion`), 1.26.0 (editorial, créditos, órganos y preliminares; migra), 1.27.0 (borra de `revista` las columnas que pasaron a la editorial; su vuelta atrás las repone desde la editorial), 1.28.0 (`credit_roles.uri`, `credit_rol_nombre`, `licencia_texto`, `revista.logo`), 1.29.0 (`articulo.licencia_texto`, `contribuyente_credit.nombre_rol` y `uri_rol`; congela los publicados con el catálogo del momento). Cada uno con respaldo, PREVIO, idempotencia y vuelta atrás probados en la base de prueba; los que borran o migran dejan un `…-volver-atras.sql` junto al respaldo. `m_ConexionBD.ObtenerEsquemaEsperado` se actualiza con cada uno. Ver SC-71, SC-88 y SC-90.
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90,vinculo:SC-102,vinculo:GV-217,vinculo:SC-104
+LIBROS: LA EDITORIAL Y CROSSREF (25/11/2026)
+
+- 2.2.0: `libro_editorial`, las editoriales de cada libro en orden, con coedición (SC-88). Migra una editorial por cada combinación de los cinco datos de identidad del libro (nombre, institución, ROR, ciudad y país), reusando la fila de `editorial` que ya los tenga. Es aditiva: la aplicación anterior sigue andando.
+- 2.3.0: `libros_md.crossref_fecha_deposito`, el registro del depósito (SC-108).
+- 2.4.0: borra de `libros_md` las ocho columnas que pasaron a la editorial (`editorial`, `institucion_editora`, `ror_editorial`, `ciudad_publicacion`, `pais_publicacion`, `pais_publicacion_codigo`, `direccion_editorial` y `doi_prefix`), `colecciones.doi_prefix` y `capitulos.crossref_estado` y `crossref_fecha_deposito`. Vacía `libros_md.email_editorial` cuando repite el de la editorial principal.
+
+La 2.4.0 frena si una VIEW usa una columna a borrar o si una colección tiene prefijo cargado. Informa, sin frenar, los libros sin editorial que tenían datos viejos y las consultas guardadas (tabla `consultas`, columna `editor_consultas`) que nombran columnas borradas. Las FK que usan una columna se borran en el mismo `ALTER` que la columna: si no, MySQL da 1828 (GV-224). La cuenta de columnas de `ValidarEsquemaBD` es exacta: el script y la aplicación nueva se instalan juntos, en todos los puestos.
+
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90,vinculo:SC-102,vinculo:GV-217,vinculo:SC-104,vinculo:SC-108,apoya:GV-224
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -1440,7 +1471,7 @@ DISTRIBUCIÓN
 
 El paso 8 de la construcción del `.deb` incluye `.hidden/ayudas/`, que se instala en `/usr/share/gbpublisher/ayudas/`.
 
-La carpeta NO entra en la lista de `m_InicioCierre.DirectorioOcultoApp()`: la aplicación la lee directamente del sistema. Es una excepción a SC-11, con una razón distinta de la de `engine/`: en la ayuda no hay nada que ajustar, y como la copia local nunca se sobrescribe, cada actualización dejaría al usuario con la ayuda vieja. Que falte en esa lista es deliberado, no un olvido.
+La aplicación la lee de los recursos del paquete, `m_InicioCierre.RutaRecursos()`, como todo recurso desde el 25/11/2026 (SC-11). Hasta entonces era una excepción deliberada a la copia local: en la ayuda no hay nada que ajustar, y una copia que nunca se sobrescribía dejaba al usuario con la ayuda vieja.
 
 CLAVE: EL Tag DEL CONTROL
 
@@ -1506,7 +1537,7 @@ DATOS EN libros_md
 - `texto_catalogacion` y `texto_legal`: impreso.
 - `texto_catalogacion_digital` y `texto_legal_digital`: EPUB. Si están vacíos va el bloque genérico; NUNCA se recurre al texto impreso, que trae tirada e imprenta.
 - `logo_portada` y `logo_coleccion`: nombre normalizado en `media/` (`logo-portada.EXT`, `logo-coleccion.EXT`), con el mismo mecanismo que la tapa (`btnBuscarTapa_Click`). El nombre de la colección y el del director son parte de la imagen.
-- `numero_paginas`, ya existente: se carga a mano. No se usa `\ztotpages`.
+- `numero_paginas`, ya existente: lo escribe la composición (CANTIDAD DE PÁGINAS). No se usa `\ztotpages`.
 - `url_libro`, ya existente: va como texto. Sin QR.
 - `leyenda_autoria` (1.5.0): la línea debajo de los nombres en la portada, tal como debe salir («coordinadores», «compiladora»). La escribe el editor: el género y el número no se deducen de la base (`autores.genero` es texto libre y ningún código lo usa). Vacía, no hay línea.
 
@@ -1536,11 +1567,18 @@ Gambas los reemplaza ANTES de Pandoc: así Pandoc escapa los caracteres especial
 
 PLANTILLAS
 
-Cada campo de texto tiene un botón que abre `FPlantillaCreditos` con la plantilla de la editorial: un archivo por campo en `~/.gbpublisher/plantillas/<campo>.md`, contenido del usuario como los snippets (SC-21) y fuera de la copia de SC-11. Si no hay, se muestra la base de gbpublisher, que no trae datos de ningún sello. Aplicar copia al campo y pregunta si ya tiene texto; los reemplazos de cada libro se hacen después, con el editor ampliado.
+Cada campo de texto tiene un botón que abre `FPlantillaCreditos` con la plantilla de la editorial: un archivo por campo en `~/.gbpublisher/plantillas/<campo>.md`, contenido del usuario como los snippets (SC-21): lo único que guarda `~/.gbpublisher` (SC-11). Si no hay, se muestra la base de gbpublisher, que no trae datos de ningún sello. Aplicar copia al campo y pregunta si ya tiene texto; los reemplazos de cada libro se hacen después, con el editor ampliado.
 
 CANTIDAD DE PÁGINAS
 
-Después de compilar, la aplicación lee las páginas del PDF con `pdfinfo` y AVISA si difieren de `numero_paginas`. No escribe: el número lo carga el editor. Cuenta páginas físicas, cortesía incluida.
+Desde el 25/11/2026 las escribe la composición: un solo escritor (SC-109). Hasta esa fecha el editor cargaba el total y la aplicación solo avisaba si difería del PDF.
+
+- Una composición completa y correcta guarda, en una transacción, `libros_md.numero_paginas` y `pagina_inicio`, `pagina_fin` y `numero_paginas` de cada pieza. El total es el de `pdfinfo`: páginas físicas, cortesía incluida.
+- El formulario las muestra y no las deja editar. Una pieza sin folio muestra «(sin páginas)».
+- Si el total cambió y `texto_legal` o `texto_catalogacion` usan `{paginas}`, avisa «volvé a componer»: la página legal salió con el número anterior.
+- Libro publicado, agotado o descatalogado (`estado_publicacion`): la composición no escribe nada. Si dio otras páginas, lo avisa y muestra las diferencias. Una corrección de imprenta que mueve la paginación se registra pasando el libro a «en preparación» y componiendo de nuevo (caso real, Duek: de 150 a 152 páginas).
+- Libro ya depositado en Crossref (SC-108) y páginas cambiadas: avisa que hay que redepositar.
+- La salida PDF/A no escribe páginas.
 
 LOGOS
 
@@ -1552,7 +1590,7 @@ ESQUEMA
 
 Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescribe partiendo del REAL, leído en information_schema: el baseline no tiene `indice_concepto` ni `indice_autores`, que el código usa, y `MODIFY` reemplaza la lista entera. Los handlers nuevos de logo declaran sus variables al principio (RC-GM-18), a diferencia de `btnBuscarTapa_Click`.
 
-**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45,vinculo:SC-56,vinculo:SC-76,vinculo:SC-85,vinculo:SC-104
+**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45,vinculo:SC-56,vinculo:SC-76,vinculo:SC-85,vinculo:SC-104,vinculo:SC-109,vinculo:SC-108
 
 **PENDIENTE:** PDF implementado y probado con un libro real. EPUB implementado: las páginas generadas por el código real pasan epubcheck en el contenedor; falta probarlo con un libro real y verlo en un lector. Esquema: actualizar-esquema-1.4.0.sh y 1.5.0.sh.
 
@@ -2002,7 +2040,7 @@ DÓNDE SE LEE
 
 `m_InicioCierre.RutaRecursos() &/ "shortcodes"`: `.hidden/shortcodes` del proyecto desde el IDE, `/usr/share/gbpublisher/shortcodes` instalado. La carpeta va en Archivos extra del proyecto (`.project`, ExtraFiles); sin eso el paquete sale sin catálogo.
 
-No se copia a `~/.gbpublisher` (SC-11): no hay nada que ajustar, y una copia local vieja dejaría el panel con los shortcodes de otra versión.
+Se lee del paquete, como todo recurso (SC-11). Antes del 25/11/2026 era una excepción a la copia local: una copia vieja habría dejado el panel con los shortcodes de otra versión.
 
 UN SOLO DICCIONARIO
 
@@ -2987,7 +3025,7 @@ PERSONALES, SIN JUEGO DE LA CASA
 
 Cada usuario desarrolla sus patrones sobre sus propios textos. No viajan patrones en el paquete y no hay nada en la base.
 
-- Carpeta `~/.gbpublisher/regex/`. La crea vacía `m_InicioCierre.DirectorioOcultoApp()`. No entra en la lista de copia de SC-11: no hay nada que copiar desde el sistema (el criterio de los snippets, SC-21).
+- Carpeta `~/.gbpublisher/regex/`. La crea vacía `m_InicioCierre.DirectorioOcultoApp()`. Es contenido del usuario, como los snippets (SC-21, SC-11).
 - La carpeta es de la cuenta de Linux, no de la máquina: dos usuarios de gbpublisher que entran con la misma cuenta comparten los patrones; dos cuentas, no. Entre cuentas o entre máquinas se pasan con Compartir e Importar.
 
 UN ARCHIVO POR PATRÓN
@@ -3406,7 +3444,7 @@ MEDIDO con `ref-l-MOLINARO.bib` (222 entradas): las 222 referencias del HTML tie
 
 QUIÉN DECIDE EL CAMINO
 
-Gambas, en un solo lugar: `m_GenerarSalidasLibro.PrepararCitasPantalla`. Si el estilo tiene archivo de pantalla, `~/.gbpublisher/latex/cita-<estilo>-html.tex`, el modo es `tex4ht`: escribe los insumos de la pasada (`m_GenerarPDFLibro.EscribirInsumosCitas`: la lista de piezas, `tmp/citas-proyecto.tex` y el `.bib`, con las mismas funciones que el PDF) y pasa el modo a `generar_html_libro.sh` y a `generar_epub_libro.sh`. Si no lo tiene, el modo es `xslt` y siguen las plantillas por estilo de las hojas. Los scripts reciben el modo y no lo vuelven a decidir.
+Gambas, en un solo lugar: `m_GenerarSalidasLibro.PrepararCitasPantalla`. Si el estilo tiene archivo de pantalla, `RutaRecursos()/latex/cita-<estilo>-html.tex` (SC-11), el modo es `tex4ht`: escribe los insumos de la pasada (`m_GenerarPDFLibro.EscribirInsumosCitas`: la lista de piezas, `tmp/citas-proyecto.tex` y el `.bib`, con las mismas funciones que el PDF) y pasa el modo a `generar_html_libro.sh` y a `generar_epub_libro.sh`. Si no lo tiene, el modo es `xslt` y siguen las plantillas por estilo de las hojas. Los scripts reciben el modo y no lo vuelven a decidir.
 
 Un estilo sin archivo de pantalla y sin plantillas en la hoja (hoy, cualquiera fuera de apa, iso690, ieee y vancouver) corta el HTML y el EPUB. Antes caía en un autor-año genérico que no es el del PDF.
 
@@ -3418,7 +3456,7 @@ LAS PIEZAS
 4. `cita-fragmentos.xsl`. La lectura de `citas.html` para las hojas de HTML y EPUB: declara el parámetro `bib_dir`, busca cada grupo por su id y cada bibliografía por su marca, y copia el marcado a la salida en el espacio de nombres de XHTML. Cada hoja define la plantilla `gbct:enlace-cita`, porque el enlace de una cita no es igual en HTML (panel) y en EPUB (href).
 5. `docbook-to-html.xsl` Y `docbook-to-epub.xsl`. Con `bib_dir`, el primer `biblioref` de cada grupo dibuja el texto de biblatex y los demás no emiten nada; el separador entre dos citas se suprime solo si la segunda quedó en el grupo de la primera (la regla del PDF). Las referencias son las que imprimió biblatex, en su orden, y cada una se une con su `biblioentry` por la clave: el `xml:id` es el destino de los enlaces. Sin `bib_dir`, la salida es la misma que antes (medido: idéntica byte a byte en las dos hojas).
 6. EL CSS. `font-variant-caps: all-small-caps` para `.versalitas-todas` en `gbpublisher.css` y `gbpublisher-epub-libro.css` (SC-56). Sangría francesa: el EPUB ya la tenía en `.ref-item`; en el HTML va en `.ref-item.ref-biblatex`, solo para estas entradas, porque la hoja es común con revistas. Esas entradas van además en `--font-serif` (Noto Serif), la tipografía del texto, que trae `smcp` y `c2sc` (GV-104; decisión de Alberto).
-7. EL SELECTOR DE ESTILOS lista los `cita-*-config.tex` de `~/.gbpublisher/latex/`, con la etiqueta de su primera línea (`% ESTILO: …`). `libros_md.estilo_cita` guarda el identificador (`apa`, `verona-modern`); la conversión de los `.csl` viejos la hace `actualizar-esquema-1.9.0.sh`.
+7. EL SELECTOR DE ESTILOS lista los `cita-*-config.tex` de `RutaRecursos()/latex/` (SC-11), con la etiqueta de su primera línea (`% ESTILO: …`). `libros_md.estilo_cita` guarda el identificador (`apa`, `verona-modern`); la conversión de los `.csl` viejos la hace `actualizar-esquema-1.9.0.sh`.
 8. LA CONFIGURACIÓN DE tex4ht, `cita-tex4ht.cfg`, viaja en `.hidden/latex/`, con las de estilo.
 
 EL id DE CADA CITA
@@ -3601,7 +3639,7 @@ QUIÉN LO CARGA
 
 El que carga el estilo, inmediatamente después de `cita-<estilo>-config.tex` (`\NewBibliographyString` exige biblatex cargado): `preambulo-contrato.tex` (PDF de libros) y el documento mínimo de `preparar_citas_libro.sh` (pasada de tex4ht), por nombre; `m_XML.ObtenerPreambuloEmbebido` (revistas), con ruta absoluta. No lo carga el config: `\input` resuelve contra la carpeta de la compilación, no contra la del archivo que lo pide, y en revistas el config se carga por ruta absoluta desde otra carpeta. Sin biblatex (vancouver, que va por bibtex) el archivo termina sin definir nada.
 
-Llega al proyecto con `CopiarRecursosLatex`, que copia todos los `.tex` de `~/.gbpublisher/latex/`; `preparar_citas_libro.sh` lo copia a la carpeta de la pasada y corta si falta.
+Llega al proyecto con `CopiarRecursosLatex`, que copia todos los `.tex` de los recursos del paquete, `RutaRecursos()/latex/` (SC-11); `preparar_citas_libro.sh` lo copia a la carpeta de la pasada y corta si falta.
 
 LOS CÓDIGOS DEL CATÁLOGO SON EL CONTRATO
 
@@ -4209,7 +4247,7 @@ LA CADENA
 - Va SEGUNDO: después de `cuadro-leer`, que inserta el texto del cuadro, y antes de todo filtro que serializa. Está en FILTROS_LIBRO y FILTROS_REVISTA (`engine/comun.sh`); solo, sin los demás filtros, en `m_PrimerasLibro.ConvertirMarkdown`. También estaba en `m_XML.GenerarBodyXML`, `m_GenerarODT` y `m_GenerarEpub.ConvertirMdAXhtml`, retirados (SC-96, SC-98).
 - `--abbreviations` en esos mismos lectores y en `vista_cuadro.sh`. La ruta está en `comun.sh` (`RUTA_ABREVIATURAS`) y en `m_Constantes` (`SUBRUTA_ABREVIATURAS`, con `SUBRUTA_FILTRO_ESPACIO_FIJO`). `generar_canonicos_capitulos.sh` y `vista_cuadro.sh` frenan si falta la lista.
 - `cuadro-leer.lua` lee el archivo del cuadro con `pandoc.read`, pasándole solo la lista (GV-133).
-- La lista viaja en `filters/`: se copia a `~/.gbpublisher/filters/` y se coteja con la instalada, como los filtros.
+- La lista viaja en `filters/` y se lee del paquete, como el filtro: `m_Constantes.SUBRUTA_ABREVIATURAS` y `SUBRUTA_FILTRO_ESPACIO_FIJO` sobre `RutaRecursos()` (SC-11).
 
 LAS SALIDAS
 
@@ -4275,7 +4313,7 @@ Cada gráfico vive en `graficos/fig-nombre.md`, en la raíz del proyecto como `c
 
 LAS SALIDAS
 
-- EL HTML. `m_Graficos` lee y controla el archivo y escribe la descripción del gráfico con `JSON.Encode`, con `</` cambiado por `<\/` (GV-137), en `tmp/vista-grafico/fig-nombre.json`. Un texto vacío no queda en la `Collection` (GV-68): la clave no se escribe, y la plantilla toma como vacío lo que falta. `engine/grafico.sh` (SC-13, lanzado por `m_Lanzadora.EjecutarScript`, SC-53) llena los seis huecos de la plantilla —el id del gráfico para el `<title>`, el idioma, las dos fuentes en base64, Chart.js 4.4.1 entero y la descripción—. La lee de la copia local, `~/.gbpublisher/chart/`, que se coteja con `.hidden/chart/` al arrancar (SC-11). La plantilla declara `<meta charset>` antes de su comentario de cabecera: la codificación tiene que estar en los primeros 1024 bytes, y un `<title>` vacío no es HTML válido. El validador del HTML del libro revisa también los `fig-nombre.html` de `docs/assets/media/`, y así aparecieron las dos faltas (29/10/2026). Después, controla con `chromium --dump-dom` que la plantilla haya dibujado (GV-141). La configuración de Chart.js la arma la plantilla: las funciones de las marcas y del tooltip no pueden ir en JSON. Cada `fig-nombre.html` funciona solo: lleva Chart.js y la fuente.
+- EL HTML. `m_Graficos` lee y controla el archivo y escribe la descripción del gráfico con `JSON.Encode`, con `</` cambiado por `<\/` (GV-137), en `tmp/vista-grafico/fig-nombre.json`. Un texto vacío no queda en la `Collection` (GV-68): la clave no se escribe, y la plantilla toma como vacío lo que falta. `engine/grafico.sh` (SC-13, lanzado por `m_Lanzadora.EjecutarScript`, SC-53) llena los seis huecos de la plantilla —el id del gráfico para el `<title>`, el idioma, las dos fuentes en base64, Chart.js 4.4.1 entero y la descripción—. La lee de `$DIR_RECURSOS/chart/`: `.hidden/chart/` desde el IDE, `/usr/share/gbpublisher/chart/` instalado (SC-11). La plantilla declara `<meta charset>` antes de su comentario de cabecera: la codificación tiene que estar en los primeros 1024 bytes, y un `<title>` vacío no es HTML válido. El validador del HTML del libro revisa también los `fig-nombre.html` de `docs/assets/media/`, y así aparecieron las dos faltas (29/10/2026). Después, controla con `chromium --dump-dom` que la plantilla haya dibujado (GV-141). La configuración de Chart.js la arma la plantilla: las funciones de las marcas y del tooltip no pueden ir en JSON. Cada `fig-nombre.html` funciona solo: lleva Chart.js y la fuente.
 - LA FUENTE. Noto Serif, la del HTML (decisión de Alberto). Un subconjunto latino en woff2, Regular y Bold, embebido como data URI (unos 32 KB): el iframe es otro documento y no hereda la fuente de la página, y el PNG se saca sin red. La plantilla dibuja después de `document.fonts.load` (GV-135). Los subconjuntos se generan una vez con el comando de GV-135 y viven en `.hidden/chart/`.
 - LO QUE LLEVA EL GRÁFICO. Las cifras de las marcas, del tooltip y de la tabla de datos con las reglas de SC-64, como el formateador de `cifras.lua` (SC-65): punto decimal, grupos de a tres con U+202F desde cinco dígitos, menos U+2212, «× 10ⁿ» con volado; títulos de ejes; apilado; `beginAtZero` salvo `cero: no`; la unidad en las marcas, el tooltip y la tabla, separada de la cifra con U+202F salvo el grado de ángulo (SC-64); tooltip de todas las series a la vez; `pointStyle` y `borderDash` distintos por serie, para que se distingan impresas en gris; en `torta` y `dona`, un color por porción. En las paletas secuenciales se omiten los dos tonos más claros: sobre blanco no se ven.
 - ACCESIBILIDAD. El canvas va con `aria-hidden` y, al lado, la tabla de datos, en un `div` fuera de la vista y legible por un lector de pantalla. La clase que la oculta va en el `div` y no en la tabla: una tabla no se achica y agrandaba el alto de la página (GV-144). No se usa `role="img"` en el canvas: en WAI-ARIA 1.2 el rol img vuelve presentacional lo que tiene adentro, y la tabla de respaldo se perdería.
@@ -5294,7 +5332,7 @@ DECISIÓN CERRADA (Alberto, 12/11/2026; etapa B de las salidas de revistas). Mod
 LA EDITORIAL ES LA MADRE DE SUS REVISTAS
 
 - Tabla `editorial` (nombre, institución, ROR, ciudad, país, prefijo DOI, correo, licencia, URL y titular por defecto) y `editorial_credito` (cargo, persona, desde, hasta): la producción y las autoridades viven en la editorial, con vigencia.
-- `revista.id_editorial` NOT NULL. El correo queda también en la revista como reemplazo opcional; `tipo_acceso_defecto` sigue en la revista. La editorial se vincula solo a revistas por ahora; los libros, después.
+- `revista.id_editorial` NOT NULL. El correo queda también en la revista como reemplazo opcional; `tipo_acceso_defecto` sigue en la revista. La editorial se vinculaba solo a revistas; los libros, desde la 2.2.0 (LOS LIBROS, abajo).
 - Esquemas: 1.26.0 crea las tablas y migra una editorial por grupo de identidad (frena si hay conflicto); 1.27.0 borra de `revista` las nueve columnas que pasaron.
 - Interfaz: la pestaña «Revistas» de `FSysAdmin` pasa a «Editorial» (`m_Editorial`), con un botón que abre `FRevistas`. Una editorial se borra solo sin revistas; una revista, solo sin números.
 
@@ -5311,7 +5349,20 @@ LAS PRELIMINARES
 - La tapa es `numero.imagen_tapa`: si el número declara la tapa y no tiene imagen, frena.
 - Las arman el PDF del número (`numero-maestro-latex.xsl`, SC-89) y el EPUB (`numero-a-epub.xsl`, SC-91) con las mismas funciones (`revista-comun.xsl`: la conjunción «y/e», la persona, los tramos del sumario por sección o dossier). El sumario agrupa los artículos por tramo seguido del mismo dossier o, sin dossier, de la misma sección. Un órgano de un solo miembro va en línea.
 
-**Relaciones:** vinculo:SC-71,vinculo:SC-22,vinculo:SC-25,vinculo:SC-87,vinculo:SC-104
+LOS LIBROS (25/11/2026)
+
+- `libro_editorial` (2.2.0, SC-22): las editoriales de cada libro, en orden. La de orden 1 es la principal: deposita en Crossref y da el lugar de edición (`{ciudad}`, `\gbciudad`).
+- La ficha del libro tiene la lista, con Agregar, Quitar, Subir y Bajar (`m_EditorialLibro`, `CEditorialesLibro`). El correo del libro queda como «email-depositante», optativo, y reemplaza solo al de la principal. Una editorial con libros no se borra.
+- La coedición va en todas las salidas, con los nombres unidos por la regla de `{autoria}` («A y B», «A, B y C», con y/e):
+  - PDF: `{editorial}` de las primeras y `\gbeditorial`;
+  - EPUB: la tapa y los créditos; en el OPF, un `dc:publisher` por editorial;
+  - canónico: un `publisher` por editorial;
+  - HTML (`docbook-to-html.xsl`, `$editoriales`): la cabecera, «Cómo citar», `citation_publisher` y los datos de citación con los nombres unidos; un `DC.publisher` por editorial; en Schema.org, una `Organization` o una lista;
+  - Crossref: un `publisher` por editorial en `book_metadata`; en `book_series_metadata` el esquema admite uno solo, y va la principal (SC-108).
+- Un libro con una sola editorial sale idéntico a antes (HTML de Duek, comparado byte a byte).
+- La 2.4.0 borró de `libros_md` los datos que pasaron a la editorial (SC-22).
+
+**Relaciones:** vinculo:SC-71,vinculo:SC-22,vinculo:SC-25,vinculo:SC-87,vinculo:SC-104,vinculo:SC-108
 
 ### SC-89 — Revistas: el PDF de cada artículo y el del número — contrato partido, primera página con columna, paginación que vuelve a la base y PDF/A-2u
 
@@ -6185,6 +6236,102 @@ TeX Live sigue sin congelarse (SC-95): según la experiencia de Alberto, no romp
 6. El artículo del blog sobre la cuenta de GitHub.
 
 Después: la tanda de Mint 23 y el modo compartido (Eduvim).
+
+### SC-108 — Crossref para libros: el XML de depósito desde el canónico y la base, con el DOI del libro obligatorio y el registro manual del depósito
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Crossref 5.4.0 / Saxon-HE / xmllint / Linux Mint, probado por Alberto; gbc3 3.19 y Saxon 9.9 en el contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 25/11/2026). Debate y decisiones: `claude/crossref-libros.md` del proyecto. Esquema: Crossref 5.4.0 (`schemas/crossref/crossref5.4.0.xsd` del paquete).
+
+LO QUE MANDA CROSSREF
+
+- El DOI del libro es obligatorio: no se depositan capítulos con DOI sin el DOI de la obra (guía de marcado de libros y capítulos). El XSD lo deja opcional; manda la guía.
+- Sin ISBN, `<noisbn>` es obligatorio.
+- `content_item` exige `doi_data`.
+- `book_series_metadata` admite un solo `publisher`.
+
+CÓMO SE ARMA
+
+- Menú de FMain para el libro (`m_GenerarSalidasLibro.GenerarCrossrefLibro`). Gambas escribe el volcado de la base, `tmp/crossref-libro-datos.xml` (versión 1, `EscribirVolcadoCrossref`), y lanza `engine/generar_crossref_libro.sh` (SC-13). El script ensambla el canónico y aplica `xslt/libro-a-crossref.xsl` con Saxon (parámetros `canonico`, `manifiesto`, `timestamp` y `libro`).
+- Antes de transformar, la plantilla con nombre `verificar` de la misma hoja devuelve un TSV con los frenos y los avisos: la regla vive en un solo lugar. El script lee el TSV pasando el tabulador a 0x1F antes de `read` (GV-162), y manda los mensajes de java a un archivo aparte.
+- Las piezas son los elementos del canónico con `xml:id` de la forma `cap-N` (`^cap-[0-9]+$`).
+- El validador del XSD está en `engine/crossref_comun.sh`, compartido con revistas; salió de `revista_comun.sh`, que ahora lo incluye.
+- En la pestaña de validación de FMain, la opción Crossref se habilita también para libros (`m_Validaciones.EsLibro`; `validar_sabor.sh`, `validar_crossref_libro`).
+
+MAPEOS
+
+- `book_type`: monografia, manual y traduccion → monograph; obra_colectiva, compilacion y actas → edited_book; referencia → reference.
+- Roles: author → author; editor, cualquiera sea su role → editor; othercredit translator → translator. Los demás no van.
+- ISBN: impreso → `media_type="print"`, electrónico → `electronic`. Sin ninguno, `noisbn reason="monograph"` con aviso. Impreso igual al electrónico: FRENO, es un error de carga.
+- Serie: la más específica con ISSN (la subserie antes que la serie); `volume` es el número en la colección.
+- Editoriales: un `publisher` por editorial del libro, en orden; en la serie, solo la principal (SC-88).
+- Licencia: `ai:program` con `ai:license_ref applies_to="vor"`.
+
+PIEZAS Y DESTINOS
+
+- Sin `doi_libro`, FRENA.
+- Van como `content_item` solo las piezas con DOI. FRENAN: un DOI de otro prefijo que el del libro, un DOI repetido y un `capitulo` sin DOI cuando al menos una pieza tiene.
+- `resource` del libro: `url_libro`. De cada pieza: `url_libro` + `h-{nombre_archivo}.html`, la página propia del capítulo en el HTML del libro.
+- Con el libro depositado, una pieza con DOI no se renombra: el nombre es parte de la URL registrada (`m_Metadatos.GuardarMetadatosDeCapitulo`, apartado 3c).
+- Páginas: las de la composición (SC-109). Una pieza sin folio va sin `pages`.
+
+CITAS
+
+`citation_list` por pieza: su bibliografía o, si el libro tiene bibliografía consolidada, lo que la pieza cita (`biblioref`). Si ninguna pieza tiene DOI, las referencias van en el libro.
+
+EL REGISTRO DEL DEPÓSITO
+
+gbpublisher no deposita: arma y valida el XML, y la editorial lo sube. `libros_md.crossref_fecha_deposito` (2.3.0, SC-22) registra que se subió.
+
+- En la ficha del libro, «marcar» pone la fecha de hoy (si ya había una, pregunta: es otro depósito) y «quitar» la borra; se graba con Guardar. El campo es de solo lectura, con la norma de diseño de esos campos.
+- No es un `DateBox`: no admite vacío (GV-226).
+- Con la fecha puesta: una pieza con DOI no se renombra (quitar la marca es el camino para hacerlo), y si la composición cambia las páginas avisa que hay que redepositar (SC-25).
+- Las columnas por capítulo (`capitulos.crossref_estado` y `crossref_fecha_deposito`) no tenían uso y se borraron en la 2.4.0.
+
+PROBADO
+
+Por Alberto en Mint, con las pruebas de los frenos, incluido un DOI falso.
+
+**Relaciones:** vinculo:SC-13,vinculo:SC-22,vinculo:SC-25,vinculo:SC-52,vinculo:SC-53,vinculo:SC-72,vinculo:SC-85,vinculo:SC-88,vinculo:SC-105,vinculo:SC-109,vinculo:GV-162,vinculo:GV-226
+
+**PENDIENTE:** Partes con DOI: Alberto tiene libros con partes, todavía sin DOI de libro. Las partes viven solo en la base (`partes_libro`, `capitulos.id_parte`); el canónico es plano. Para depositarlas como `content_item component_type="part"` hacen falta el DOI y el título en el manifiesto, y una página de destino para la parte, que hoy no existe (en el HTML la parte es un rótulo del índice). Se decide cuando haya un libro con partes y DOI. Aparte: un registro del depósito como este para los números de revista.
+
+### SC-109 — Paginación del libro: la escribe la composición, leída de los .aux por engine/paginacion_libro.pl
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / LuaLaTeX, TeX Live / perl / pdfinfo (poppler-utils) / Linux Mint, probado por Alberto con Duek · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 25/11/2026). Las páginas del libro y de cada pieza tienen un solo escritor: la composición. El formulario las muestra y no las deja editar (SC-25).
+
+DE DÓNDE SALEN
+
+`engine/paginacion_libro.pl` lee `main.tex` y el `.aux` de cada pieza:
+
+- inicio: el folio de `\newlabel{cap-ID}{{…}{FOLIO}…}`, el rótulo que el generador pone al abrir cada pieza;
+- fin: la página de `\@setckpt` al cerrar la pieza, menos uno, en el estilo del inicio (arábigo o romano);
+- salida: `archivo<TAB>id<TAB>inicio<TAB>fin<TAB>paginas`;
+- una pieza sin folio (dedicatoria, foto) va a stderr como «página especial, sin folio» y queda en NULL.
+
+`compilar_pdf_libro.sh` borra el TSV viejo al empezar, exige `perl` y `pdfinfo`, y en su apartado 8 escribe `tmp/paginacion-libro.tsv` de forma atómica, con una fila `(libro)` que lleva el total de `pdfinfo`.
+
+CUÁNDO NO SE ESCRIBE
+
+- Con un `\includeonly` activo, o con un `.aux` que falta o no se lee, no hay TSV: aviso (código 3) y el PDF se entrega igual.
+- La salida PDF/A no escribe páginas.
+
+LO QUE HACE GAMBAS
+
+`m_GenerarSalidasLibro.GuardarPaginacion` guarda todo en una sola transacción:
+
+- Si una pieza del TSV no coincide con la base (`nombre_archivo` e id), no guarda nada.
+- Libro publicado (`EsLibroPublicado`): no escribe; si las páginas cambiaron, lo avisa y muestra las diferencias.
+- Avisos «volvé a componer» y «redepositar en Crossref»: SC-25 y SC-108.
+- `RangoLegible` arma lo que muestra el formulario, «(sin páginas)» para una pieza sin folio.
+
+MEDIDO
+
+Con Duek: el total 152 y cada pieza con sus folios (por ejemplo, la introducción IX–XXII y el capítulo 3, 45–60), cotejados por Alberto contra el PDF.
+
+**Relaciones:** vinculo:SC-25,vinculo:SC-13,vinculo:SC-53,vinculo:SC-108
 
 ---
 
@@ -8424,7 +8571,7 @@ CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint). El error aparece al c
 
 CONSECUENCIA
 
-El cotejo de recursos de SC-11 sirve también para un binario, como era el `.ott` del ODT (retirado: SC-96), sin sumas de verificación.
+El cotejo de recursos de SC-11 servía también para un binario, como era el `.ott` del ODT (retirado: SC-96), sin sumas de verificación. El cotejo se retiró con la copia local el 25/11/2026 (SC-11); el comportamiento sigue medido y vale para cualquier comparación de archivos.
 
 CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint): los tres casos.
 
@@ -11244,6 +11391,113 @@ LÍMITE. No se probó un valor que parezca número o booleano (por ejemplo, una 
 **Relaciones:** apoya:SC-106
 
 **PENDIENTE:** Confirmar en 3.22 (Mint) con el mismo script.
+
+### GV-224 — MySQL 8.0: DROP COLUMN de una columna que usa una FK da el error 1828; un CHECK que solo la usa a ella se borra solo
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido el 25/11/2026 con MySQL 8.0.46, al escribir `actualizar-esquema-2.4.0.sh` (la columna `libros_md.pais_publicacion_codigo` y su FK `fk_libro_pais_publicacion`), y repetido en una tabla de prueba:
+
+    CREATE TABLE h (id INT PRIMARY KEY, c CHAR(2), n INT,
+      CONSTRAINT fk_h FOREIGN KEY (c) REFERENCES p(c),
+      CONSTRAINT chk_n CHECK (n > 0));
+    ALTER TABLE h DROP COLUMN c;
+    -- ERROR 1828 (HY000): Cannot drop column 'c': needed in a foreign key constraint 'fk_h'
+    ALTER TABLE h DROP FOREIGN KEY fk_h, DROP COLUMN c;   -- correcto
+    ALTER TABLE h DROP COLUMN n;                           -- correcto: chk_n desaparece con la columna
+
+REGLA. Un script de esquema que borra una columna busca antes en `information_schema` las FK que la usan y las borra en el MISMO `ALTER` que la columna. Un CHECK que solo nombra a esa columna no hace falta borrarlo. Un CHECK que nombra también a otras no se midió.
+
+**Relaciones:** apoya:SC-22
+
+### GV-225 — LaTeX (titlesec): con footskip=0pt el pie cae sobre la última línea; \raisebox con sus argumentos opcionales dentro de \setfoot imprime un corchete suelto
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaLaTeX / TeX Live 2023 / titlesec (pagestyles) / geometry / contenedor Ubuntu 24.04; el folio, visto por Alberto en Mint · **Verificado:** 2026-11
+
+Medido el 25/11/2026 con LuaLaTeX (TeX Live 2023), titlesec con `pagestyles` y geometry, al poner el folio en la primera página de cada capítulo (estilo `plain`).
+
+- La geometría del libro tiene `footskip=0pt`: la línea base del pie coincide con la de la última línea del texto. Un folio puesto con `\setfoot{}{\usepage}{}` queda encima de ella.
+- `\raisebox{-2\baselineskip}[0pt][0pt]{\usepage}` dentro de `\setfoot`, en `\renewpagestyle{plain}[]{…}`, imprime un «]» suelto en la página.
+- Lo que funciona: `\setfoot{}{\smash{\raisebox{-2\baselineskip}{\normalfont\usepage}}}{}`. `\smash` anula el alto y la profundidad sin argumentos opcionales; el folio baja dos líneas por debajo de la caja y la paginación no cambia.
+
+Está en `latex/preambulo-estetica.tex` del paquete. El folio en la apertura del capítulo va centrado, en la fuente del cuerpo y sin peso: es una norma de estilo de Alberto.
+
+**Relaciones:** vinculo:SC-31
+
+### GV-226 — DateBox no admite un valor vacío: siempre muestra una fecha
+
+**Estado:** hipotesis · **Evidencia:** inferida · **Entorno:** Gambas 3.22 / gb.qt6 · **Verificado:** 2026-11
+
+HIPÓTESIS, sin medir. Se tomó al diseñar el registro del depósito Crossref de los libros (SC-108, 25/11/2026): un campo que tiene que poder estar vacío («todavía no se depositó») no puede ser un `DateBox` si este siempre muestra una fecha. Se resolvió con un `TextBox` de solo lectura y dos botones, que no dependen de la hipótesis.
+
+Relacionado: `DateBox.ReadOnly` no bloquea el botón del calendario (RC-GM-14).
+
+**Relaciones:** vinculo:RC-GM-14,vinculo:SC-108
+
+**PENDIENTE:** Medir en Gambas 3.22 (Mint): un DateBox nuevo, ¿qué Value tiene? ¿Se le puede asignar Null y qué muestra? ¿El usuario puede borrar la fecha?
+
+### GV-227 — gb.highlight: la matemática del .md se pinta de un solo color con el estilo Value; un estilo propio sale sin clave en 3.19; un from … to de varias líneas solo sigue en 3.22
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gb.highlight 3.19.0 / gb.pcre / contenedor Ubuntu 24.04; gb.highlight 3.22.2 / Linux Mint (Alberto, 26/11/2026) · **Verificado:** 2026-11
+
+Medido el 26/11/2026 con un banco de consola (`bancoMatematica`): registra la gramática con `TextHighlighter.Register`, crea el tema DESPUÉS del registro, lista `TextHighlighterTheme.Styles` y corre `Run` línea por línea arrastrando el estado, como `m_ResaltadoSintaxis.HtmlResaltado`. En el contenedor con 3.19.0; en Mint con 3.22.2 (Alberto).
+
+EL PROBLEMA. `Markdown.highlight` no tenía estado para la matemática: el `_` de `c_{1j}` abría `italic.underscore`, que cerraba en el próximo `_`, y un capítulo con fórmulas quedaba manchado de bastardilla.
+
+LOS ESTADOS. Después de `code.inline` (un `$` entre comillas invertidas sigue siendo código) y antes de la negrita y la bastardilla (gana el primero que coincide, GV-120), sin hijos, para que toda la fórmula tome un color:
+
+    dolar.literal{Normal}:
+      match /\\\$/
+    math.display{Value}:
+      from /\$\$/ to /\$\$/
+    math.inline{Value}:
+      from /\$(?=\S)/ to /\$/
+
+`$$` va antes que `$`. `\$` (el signo escrito como texto, como lo deja la conversión del Word) se consume primero y no abre nada. Un `$` en `from … to` no choca con la sustitución `$(nombre)` (GV-119): cargan tanto `/\$\$/` como `$$` literal.
+
+MEDIDO (3.22.2, Mint):
+
+    esfera $j$ que son $c_{ij}$   [Normal:esfera ][Value:$j$][Normal: que son ][Value:$c_{ij}$]
+    $$\begin{aligned}             [Value:$$\begin{aligned}]
+    \sum_{j=1}^{l} c_{1j} … \\    [Value:\sum_{j=1}^{l} c_{1j} … \\]
+    \end{aligned}$$               [Value:\end{aligned}$$]
+    pesos: \$ 100 y USD 50        [Normal:pesos: \$ 100 y USD 50]
+    `code $x$` y 5 * 3            [String:`code $x$`][Normal: y 5 * 3]
+
+VARIAS LÍNEAS. En 3.22.2 el estado de un `from … to` abierto pasa a las líneas siguientes: el `aligned` entero sale en `Value`, y el bloque de código de tres comillas también. En 3.19 no pasa (ni el bloque de código): cada línea arranca en `Normal` y el `$$` de `\end{aligned}$$` abre otro bloque. Coincide con lo observado en GV-120.
+
+UN ESTILO PROPIO NO SIRVE EN 3.19. Con `math.inline{Matematica}`, el componente agrega una entrada a `TextHighlighterTheme.Styles`, pero su `Key` es la cadena vacía: `CssDeGramatica` buscaría `Markdown/` y no encontraría color. Con `{Value}`, una clave que el componente ya trae y que la gramática de Markdown no usaba, sale bien. En 3.22 el estilo propio no se midió.
+
+LAS CLAVES CAMBIAN ENTRE VERSIONES. 3.19 trae `Background`, `Selection`, `Breakpoint`… y 3.22.2 no; 3.22.2 trae `Column1` a `Column8`, `Prolog`, `CData`, `Slot`, `PseudoElement`. `Header` sale en las dos. Por eso `ClavesDeEstilo` las lee en tiempo de ejecución y no las fija en el código.
+
+LÍMITE. Pandoc no cierra una fórmula con un `$` precedido de espacio; el resaltador no puede verlo porque el lookbehind no funciona (GV-120). Un `$` suelto pinta hasta el próximo `$`. Con los dólares escritos `USD` y el signo como texto escrito `\$`, el caso no aparece.
+
+LOS TEMAS. La clave `Value` de `[Markdown]` de cada uno de los nueve temas toma el color de `[XML] String`, el de los valores de atributo del visor XML (decisión de Alberto, 26/11). En gruvbox, flexoki, gbpflexoki y los dos solarizados coincide con el color del código del .md: no molesta (decisión de Alberto).
+
+**Relaciones:** vinculo:SC-15,vinculo:GV-119,vinculo:GV-120,vinculo:GV-48,vinculo:GV-76
+
+**PENDIENTE:** Confirmar en la aplicación (Mint) el capítulo 9 del libro Inigo con el tema gruvbox. Medir en 3.22.2 si un estilo propio ({Matematica}) sale con su nombre en Styles: el banco trae math-propio.highlight.
+
+### GV-228 — La prima de las fórmulas del Word es U+2019 (’), no un apóstrofo; con ' LaTeX exige la prima antes del superíndice: g'_{x}^{c} da «Double superscript»
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / pdflatex, amsmath / TeX Live 2023 / contenedor Ubuntu 24.04; Word (OMML) del libro Inigo · **Verificado:** 2026-11
+
+Medido el 25-26/11/2026 sobre el libro Inigo (capítulos con ecuaciones de Word, OMML), con Pandoc 3.1.3 y pdflatex (TeX Live 2023) en el contenedor.
+
+LO QUE TRAE EL WORD. El autocorrector cambia el apóstrofo por la comilla tipográfica, y el editor de ecuaciones la guarda así: `<m:t>’</m:t>`. Pandoc la deja tal cual en el TeX del .md (`{g’}_{ij}`, `M’_{1}`) y en el MathML como un identificador: `<mml:mi>’</mml:mi>`, no como prima. En el libro, unas 57 fórmulas la tienen.
+
+EL CAMBIO A ' NO ES UNA SUSTITUCIÓN CIEGA. En TeX, `'` es `^{\prime}`. Seguida de `^` se funde con él; seguida de `_` y después `^`, son dos superíndices:
+
+    $g'^{c}_{\overline{x}}$     correcto
+    $g'_{\overline{x}}^{c}$     ! Double superscript.
+
+Con ’ el error no aparecía porque para TeX es un carácter común. La forma correcta pone la prima antes del superíndice: `g'^{c}_{x}`.
+
+DECISIÓN DE ALBERTO (25/11): la prima no se corrige sola al convertir; se avisa y la corrige el editor.
+
+**Relaciones:** vinculo:GV-207
+
+**PENDIENTE:** Medir con LuaLaTeX, babel-spanish y unicode-math con Libertinus Math (la composición real): cómo sale la ’ y si g'_{x}^{c} también da «Double superscript» (unicode-math maneja la prima por su cuenta).
 
 ---
 

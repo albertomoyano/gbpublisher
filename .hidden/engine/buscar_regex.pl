@@ -7,8 +7,8 @@
 #             el log son responsabilidad de Gambas. Este script no abre ningún
 #             archivo en modo escritura, no borra, no renombra y no enumera el
 #             filesystem: recibe la lista exacta de archivos por argv.
-# Ubicación : RutaRecursos() — NO se copia a ~/.gbpublisher (CopiarDirectorio
-#             no sobrescribe: un archivo copiado una vez nunca se actualiza).
+# Ubicación : RutaRecursos() — se lee del paquete, como todo recurso (SC-11):
+#             es infraestructura y no se personaliza.
 # Requiere  : perl core-base, sin módulos externos y sin JSON::PP (JSON::PP vive
 #             en perl-modules, que es Priority: standard; perl-base es Essential
 #             y está garantizado). Cero dependencias nuevas en el .deb.

@@ -3,7 +3,7 @@
 =========================================================
 docbook-to-html.xsl — Generación HTML del libro completo
 =========================================================
-UBICACIÓN: ~/.gbpublisher/xslt/docbook-to-html.xsl
+UBICACIÓN: xslt/docbook-to-html.xsl de los recursos del paquete (SC-11)
 
 VERSIÓN: Fase 1 (solo index.html — portada del libro).
 

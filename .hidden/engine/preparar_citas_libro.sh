@@ -249,7 +249,7 @@ BIB_NOMBRE="$(basename "$BIB")"
 CONFIG_ESTILO="$DIR_LATEX/cita-$ESTILO-config.tex"
 PANTALLA_ESTILO="$DIR_LATEX/cita-$ESTILO-html.tex"
 # LAS CADENAS COMUNES A TODOS LOS ESTILOS: LAS COPIA CopiarRecursosLatex
-# COMO A LOS DEMÁS .tex DE ~/.gbpublisher/latex/
+# COMO A LOS DEMÁS .tex DE latex/ DEL PAQUETE ($DIR_RECURSOS/latex, SC-11)
 CADENAS="$DIR_LATEX/cita-cadenas-es.tex"
 [[ -f "$CONFIG_ESTILO" ]] || morir "No existe latex/cita-$ESTILO-config.tex"
 [[ -f "$CADENAS" ]] || morir "No existe latex/cita-cadenas-es.tex: reabrí el proyecto para que la aplicación copie los recursos de LaTeX"
