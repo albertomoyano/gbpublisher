@@ -103,6 +103,15 @@ RUTA_SIGLAS_PIEZAS="tmp/siglas-piezas.txt"
 #  0b° espacio-fijo             ¬ A ESPACIO DURO (SC-68). DESPUÉS DE
 #      cuadro-leer, PARA ALCANZAR EL TEXTO DEL CUADRO; ANTES DE TODO
 #      FILTRO QUE SERIALIZA
+#  0c° formula                  CADA FÓRMULA ($…$, $$…$$) A SU ECUACIÓN DocBook
+#      CON EL TeX EN <alt role="tex"> ANTES DEL MathML (SC-110). DESPUÉS DE
+#      cuadro-leer, PARA ALCANZAR LAS FÓRMULAS DEL CUADRO; ANTES DE TODO
+#      FILTRO QUE SERIALIZA: cite-to-biblioref-db ESCRIBE LAS NOTAS SIN
+#      --mathml Y UNA FÓRMULA SIN TRADUCIR PERDERÍA EL MathML Y EL TeX. NO
+#      ENTRA EN UN .formula: ESE LO ARMA fenced-divs (SEGUNDO LOTE).
+#      EN LA REVISTA VA formula-jats EN EL MISMO LUGAR: EL JATS DE PANDOC
+#      YA TRAE LAS DOS FORMAS Y SOLO ARMA LA NUMERADA [$$…$$]{#eq-x} COMO
+#      <disp-formula> CON SU <label> (SC-110)
 #   1° guillemets-to-quoted-db  « » A Quoted. ANTES QUE fenced-divs, QUE
 #      SERIALIZA LOS DIVS CON pandoc.write Y DESPUÉS NO QUEDAN Str QUE PROCESAR
 #  1b° url                      \url{…} Y LAS DIRECCIONES SUELTAS A <link
@@ -164,6 +173,7 @@ RUTA_SIGLAS_PIEZAS="tmp/siglas-piezas.txt"
 FILTROS_LIBRO=(
     cuadro-leer.lua
     espacio-fijo.lua
+    formula.lua
     guillemets-to-quoted-db.lua
     url.lua
     volada.lua
@@ -193,6 +203,7 @@ FILTROS_LIBRO=(
 FILTROS_REVISTA=(
     cuadro-leer.lua
     espacio-fijo.lua
+    formula-jats.lua
     guillemets-to-quoted-db.lua
     quoted-a-nivel-jats.lua
     url.lua
@@ -946,8 +957,12 @@ controles_md() {
         esac
     done < "$informe"
 
-    # LOS [WARNING] DEL LECTOR DE PANDOC: AVISO
+    # LOS [WARNING] DEL LECTOR DE PANDOC: AVISO. SE DESCARTA «Could not convert
+    # TeX math»: LO DA EL ESCRITOR plain DE ESTA PASADA, QUE INTENTA PASAR CADA
+    # FÓRMULA A TEXTO UNICODE Y NO PUEDE CON FRACCIONES NI SISTEMAS. LA
+    # CONVERSIÓN DE VERDAD (formula.lua, --mathml) NO LO DA (SC-110)
     while IFS= read -r linea; do
+        [[ "$linea" == "[WARNING] Could not convert TeX math"* ]] && continue
         [[ "$linea" == "[WARNING]"* ]] && aviso "pandoc: ${linea#\[WARNING\] }"
     done <<< "$CONTROLES_LECTURA"
 

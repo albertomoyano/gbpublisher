@@ -167,13 +167,16 @@
          tbl-*  LOS CUADROS (SC-66): EL id ES EL NOMBRE DE SU ARCHIVO EN
                 cuadros/, ASÍ QUE ES ÚNICO EN EL PROYECTO. SE REFIEREN CON
                 @tbl-nombre DESDE CUALQUIER CAPÍTULO, COMO LAS FIGURAS.
+         eq-*   LAS FÓRMULAS NUMERADAS (SC-110): [$$…$$]{#eq-nombre}. SE
+                REFIEREN CON @eq-nombre DESDE CUALQUIER CAPÍTULO, COMO LAS
+                FIGURAS; ÚNICOS EN EL LIBRO POR CONVENCIÓN.
        LOS PREFIJOS DE REFERENCIA SON LOS MISMOS QUE LOS DE
        cite-to-biblioref-db.lua: AGREGAR eq- EN LOS DOS.
        ================================================ -->
   <xsl:function name="db:es-id-global" as="xs:boolean">
     <xsl:param name="id" as="xs:string"/>
     <xsl:sequence select="starts-with($id, 'bib-') or starts-with($id, 'fig-')
-                          or starts-with($id, 'tbl-')"/>
+                          or starts-with($id, 'tbl-') or starts-with($id, 'eq-')"/>
   </xsl:function>
 
   <!-- ================================================

@@ -87,6 +87,10 @@ RC APLICADAS:
   <!-- GRÁFICOS (SC-69): LA FIGURA INTERACTIVA, COMÚN A LAS DOS HOJAS DE HTML -->
   <xsl:include href="grafico-comun.xsl"/>
 
+  <!-- FÓRMULAS (SC-110): EL MathML DEL CANÓNICO, SIN PREFIJOS Y CON
+       display="block" EN LA FÓRMULA EN BLOQUE. COMÚN CON EL EPUB -->
+  <xsl:include href="formula-comun.xsl"/>
+
   <!-- NOTA CON SÍMBOLO (SC-86): EL SIGNO DE CADA label DEL CANÓNICO -->
   <xsl:include href="nota-simbolo-comun.xsl"/>
 
@@ -752,15 +756,16 @@ RC APLICADAS:
       <!-- Tipo (para el chip superior estilo revista) -->
       <div class="article-type-bar">Libro</div>
 
-      <!-- Título del libro -->
+      <!-- TÍTULO DEL LIBRO, POR NODOS: LA BASTARDILLA DE LA BASE SALE EN
+           <em> (SC-111) -->
       <h1 class="article-title">
-        <xsl:value-of select="$titulo_libro"/>
+        <xsl:apply-templates select="($info/db:title[not(@role)] | $info/title[not(@role)])[1]/node()"/>
       </h1>
 
-      <!-- Subtítulo si tiene -->
+      <!-- SUBTÍTULO SI TIENE, TAMBIÉN POR NODOS -->
       <xsl:if test="$subtitulo != ''">
         <div class="article-trans-title">
-          <xsl:value-of select="$subtitulo"/>
+          <xsl:apply-templates select="($info/db:subtitle | $info/subtitle)[1]/node()"/>
         </div>
       </xsl:if>
 
@@ -1348,17 +1353,27 @@ RC APLICADAS:
         </xsl:call-template>
       </div>
 
-      <!-- TÍTULO DEL CAPÍTULO -->
+      <!-- TÍTULO DEL CAPÍTULO. SE RECORRE POR NODOS: LA BASTARDILLA DE
+           LA BASE (<emphasis>, SC-111) SALE EN <em>; EL CORTE
+           (<?gb-corte?>) NO ESCRIBE NADA Y QUEDAN SUS ESPACIOS (SC-28).
+           SIN EL NODO, EL TEXTO QUE RECIBE -->
+      <xsl:variable name="capNodoTitulo" select="($capInfo/db:title | $capInfo/title)[1]"/>
       <h1 class="article-title">
-        <xsl:value-of select="$capTitulo"/>
+        <xsl:choose>
+          <xsl:when test="$capNodoTitulo">
+            <xsl:apply-templates select="$capNodoTitulo/node()"/>
+          </xsl:when>
+          <xsl:otherwise>
+            <xsl:value-of select="$capTitulo"/>
+          </xsl:otherwise>
+        </xsl:choose>
       </h1>
 
-      <!-- SUBTÍTULO SI TIENE -->
-      <xsl:variable name="capSubtitulo"
-                    select="normalize-space(($capInfo/db:subtitle | $capInfo/subtitle)[1])"/>
-      <xsl:if test="$capSubtitulo != ''">
+      <!-- SUBTÍTULO SI TIENE, TAMBIÉN POR NODOS -->
+      <xsl:variable name="capNodoSubtitulo" select="($capInfo/db:subtitle | $capInfo/subtitle)[1]"/>
+      <xsl:if test="normalize-space($capNodoSubtitulo) != ''">
         <div class="article-trans-title">
-          <xsl:value-of select="$capSubtitulo"/>
+          <xsl:apply-templates select="$capNodoSubtitulo/node()"/>
         </div>
       </xsl:if>
 

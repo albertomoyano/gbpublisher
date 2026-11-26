@@ -93,6 +93,33 @@ local CONTROLES = {
   -- TEMA DE CORRECCIÓN A RESOLVER CON EL AUTOR (DECISIÓN DE ALBERTO, 11/11,
   -- SC-29). nota-simbolo.lua FRENA IGUAL AL GENERAR
   nota_doble_en_titulo = "error",
+  -- FÓRMULAS (SC-110). TODOS AVISO: LA SALIDA SE GENERA, PERO SALE MAL O
+  -- DISTINTA DE LO QUE QUISO EL AUTOR, Y LO RESUELVE EL EDITOR EN EL .md
+  -- LA ’ DEL AUTOCORRECTOR DE WORD ADENTRO DE UNA FÓRMULA: EL PDF IMPRIME
+  -- UNA COMILLA Y NO LA PRIMA. VA ' Y ANTES DEL SUPERÍNDICE (GV-228)
+  formula_prima = "aviso",
+  -- DOS FÓRMULAS EN LÍNEA PEGADAS ($a$$b$): UN SISTEMA QUE WORD ACOMODABA
+  -- CORTANDO EL RENGLÓN. EN EL PDF SALEN CORRIDAS EN UNA LÍNEA
+  formulas_pegadas = "aviso",
+  -- UNA FÓRMULA EN BLOQUE QUE ABRE SU PROPIO PÁRRAFO: EN EL PDF DEJA UN
+  -- RENGLÓN VACÍO ARRIBA. VA PEGADA A LA FRASE QUE LA INTRODUCE
+  formula_abre_parrafo = "aviso",
+  -- UNA FÓRMULA EN BLOQUE ADENTRO DE UNA CELDA: VA EN LÍNEA ($…$)
+  formula_en_celda = "aviso",
+  -- \begin{matrix} USADO PARA UN SISTEMA (ASÍ LO ARMA WORD): VA aligned O
+  -- gathered, CON \vdots
+  matriz_como_sistema = "aviso",
+  -- UNA VARIABLE ESCRITA COMO TEXTO: BASTARDILLA CON SUBÍNDICE, SUPERÍNDICE
+  -- O PRIMA (*r~V~*, *g’*). SALE EN LA LETRA DEL TEXTO Y NO EN LA DE LA
+  -- MATEMÁTICA: VA $r_{V}$, $g'$
+  variable_como_texto = "aviso",
+  -- US$ O U$S: LOS DÓLARES SE ESCRIBEN USD (DECISIÓN DE ALBERTO, 26/11). UN
+  -- $ SUELTO PUEDE ABRIR UNA FÓRMULA
+  dolar_us = "aviso",
+  -- UNA LETRA SOLA EN BASTARDILLA (*i*): SI ES UNA VARIABLE, VA $i$; SI ES
+  -- UN RÓTULO («caso *b*»), QUEDA. NO SE AVISA EL RÓTULO CON PARÉNTESIS O
+  -- PRIMA (*b*), *d*′)), QUE YA ESTÁ EN SU FORMA
+  letra_en_bastardilla = "aviso",
 }
 
 -- LARGO MÁXIMO DEL CONTEXTO QUE ACOMPAÑA A UN HALLAZGO, EN CARACTERES
@@ -147,6 +174,15 @@ local PATRONES_PORCENTAJE = {
   "%d\226\128\175%%",
   "%d\194\172%%",
 }
+
+-- LA COMILLA SIMPLE DE CIERRE (’), QUE WORD PONE EN LUGAR DE LA PRIMA, Y
+-- LA PRIMA Y LA DOBLE PRIMA DE LOS RÓTULOS. SE BUSCAN COMO CADENA LITERAL
+local COMILLA_SIMPLE = "\u{2019}"
+local PRIMA = "\u{2032}"
+local DOBLE_PRIMA = "\u{2033}"
+
+-- LARGO MÁXIMO DE UNA FÓRMULA CITADA EN UN AVISO, EN CARACTERES
+local LARGO_FORMULA = 50
 
 -- LA MARCA DE ESPACIO FIJO (SC-68). SE BUSCA COMO CADENA LITERAL
 local MARCA_ESPACIO_FIJO = "\u{00AC}"
@@ -790,6 +826,174 @@ local function revisar_urls(doc)
 end
 
 -- ============================================================================
+-- Función   : texto_formula
+-- Propósito : El TeX de una fórmula en una línea, recortado a LARGO_FORMULA
+--             caracteres, para citarlo en un aviso
+-- Parámetros: m — el Math
+-- Retorna   : string
+-- ============================================================================
+local function texto_formula(m)
+  local s = m.text:gsub("%s+", " ")
+  if utf8.len(s) and utf8.len(s) > LARGO_FORMULA then
+    s = s:sub(1, utf8.offset(s, LARGO_FORMULA + 1) - 1) .. "…"
+  end
+  return s
+end
+
+-- ============================================================================
+-- Función   : es_rotulo_siguiente
+-- Propósito : Dice si lo que sigue a una letra en bastardilla la hace un
+--             rótulo: un paréntesis de cierre o una prima («*b*)», «*d*′)»)
+-- Parámetros: sig — el inline siguiente, o nil
+-- Retorna   : boolean
+-- ============================================================================
+local function es_rotulo_siguiente(sig)
+  if not sig or sig.t ~= "Str" then return false end
+  return sig.text:sub(1, 1) == ")" or sig.text:sub(1, #PRIMA) == PRIMA
+         or sig.text:sub(1, #DOBLE_PRIMA) == DOBLE_PRIMA
+end
+
+-- ============================================================================
+-- Función   : revisar_formulas_inlines
+-- Propósito : Los avisos de fórmulas de una lista de inlines (SC-110): la ’
+--             adentro, las fórmulas en línea pegadas, el matrix como
+--             sistema, la variable escrita como texto, la letra sola en
+--             bastardilla y US$. Baja a los contenedores, no a una nota
+--             (sus párrafos los visita el walk)
+-- Parámetros: aInlines — lista de inlines; bloque — el bloque que los
+--             contiene, para el contexto del mensaje
+-- ============================================================================
+local function revisar_formulas_inlines(aInlines, bloque)
+  local el, ant, sTexto
+  local bPegadas = false
+  for i = 1, #aInlines do
+    el = aInlines[i]
+    if el.t == "Math" then
+      -- --- 1. LA ’ ADENTRO DE LA FÓRMULA ---
+      if el.text:find(COMILLA_SIMPLE, 1, true) then
+        registrar("formula_prima",
+          "la fórmula «" .. texto_formula(el) .. "» tiene ’ (comilla): la prima es ' y va " ..
+          "antes del superíndice, g'^{c}_{x} (GV-228)")
+      end
+      -- --- 2. UN SISTEMA ARMADO CON matrix ---
+      if el.text:find("\\begin{matrix}", 1, true) then
+        registrar("matriz_como_sistema",
+          "la fórmula «" .. texto_formula(el) .. "» usa \\begin{matrix} para un sistema: " ..
+          "va \\begin{aligned} (o gathered), con \\vdots entre los grupos")
+      end
+      -- --- 3. FÓRMULAS EN LÍNEA PEGADAS: UN AVISO POR LISTA ---
+      ant = aInlines[i - 1]
+      if not bPegadas and ant and ant.t == "Math" and ant.mathtype == "InlineMath"
+         and el.mathtype == "InlineMath" then
+        bPegadas = true
+        registrar("formulas_pegadas",
+          "fórmulas en línea pegadas («" .. texto_formula(ant) .. "», «" .. texto_formula(el) ..
+          "»): si es un sistema, va un solo $$\\begin{aligned}…\\end{aligned}$$: «" ..
+          contexto_crudo(bloque) .. "»")
+      end
+    elseif el.t == "Str" then
+      -- --- 4. US$ O U$S ---
+      if el.text:find("US$", 1, true) or el.text:find("U$S", 1, true) then
+        registrar("dolar_us",
+          "«" .. el.text .. "»: los dólares se escriben USD: «" .. contexto_crudo(bloque) .. "»")
+      end
+    elseif el.t == "Emph" then
+      sTexto = pandoc.utils.stringify(el)
+      -- --- 5. VARIABLE COMO TEXTO: SUBÍNDICE, SUPERÍNDICE O PRIMA ADENTRO ---
+      local bVariable = sTexto:match("^%a+" .. COMILLA_SIMPLE .. "$") ~= nil
+                        or sTexto:match("^%a+'$") ~= nil
+      for _, hijo in ipairs(el.content) do
+        if hijo.t == "Subscript" or hijo.t == "Superscript" then bVariable = true end
+      end
+      if bVariable then
+        registrar("variable_como_texto",
+          "«*" .. sTexto .. "*» es una variable escrita como texto: va en una fórmula, " ..
+          "$…$ (r~V~ → r_{V}, g’ → g'): «" .. contexto_crudo(bloque) .. "»")
+      -- --- 6. UNA LETRA SOLA EN BASTARDILLA, SALVO EL RÓTULO ---
+      elseif sTexto:match("^%a$") and not es_rotulo_siguiente(aInlines[i + 1]) then
+        registrar("letra_en_bastardilla",
+          "«*" .. sTexto .. "*»: si es una variable, va $" .. sTexto .. "$; si nombra un caso " ..
+          "o una técnica, queda en bastardilla: «" .. contexto_crudo(bloque) .. "»")
+      end
+      revisar_formulas_inlines(el.content, bloque)
+    elseif el.t == "Note" then
+      -- LA NOTA LA VISITA EL WALK
+    elseif el.t == "Cite" then
+      for _, oCita in ipairs(el.citations) do
+        revisar_formulas_inlines(oCita.prefix, bloque)
+        revisar_formulas_inlines(oCita.suffix, bloque)
+      end
+    elseif el.t == "Image" then
+      revisar_formulas_inlines(el.caption, bloque)
+    elseif el.content then
+      revisar_formulas_inlines(el.content, bloque)
+    end
+  end
+end
+
+-- ============================================================================
+-- Función   : es_formula_en_bloque
+-- Propósito : Dice si un inline es una fórmula en bloque, suelta o numerada
+--             ([$$…$$]{#eq-nombre})
+-- Parámetros: el — el inline
+-- Retorna   : boolean
+-- ============================================================================
+local function es_formula_en_bloque(el)
+  if el.t == "Math" then return el.mathtype == "DisplayMath" end
+  if el.t == "Span" and #el.content == 1 then return es_formula_en_bloque(el.content[1]) end
+  return false
+end
+
+-- ============================================================================
+-- Función   : revisar_formulas
+-- Propósito : Los avisos de fórmulas (SC-110) en todo bloque con texto, y
+--             los de ubicación de la fórmula en bloque: en una celda, o
+--             abriendo su propio párrafo
+-- Parámetros: doc — el documento
+-- ============================================================================
+local function revisar_formulas(doc)
+  local hEnCelda = {}
+
+  -- --- 1. EN UNA CELDA: SE ANOTA EL PÁRRAFO PARA NO AVISARLO DOS VECES ---
+  doc:walk({
+    Table = function(t)
+      t:walk({
+        Math = function(m)
+          if m.mathtype == "DisplayMath" then
+            registrar("formula_en_celda",
+              "la fórmula «" .. texto_formula(m) .. "» está en bloque ($$) adentro de una " ..
+              "celda: va en línea, $…$")
+          end
+        end,
+        Para = function(b) hEnCelda[pandoc.utils.stringify(b)] = true end,
+        Plain = function(b) hEnCelda[pandoc.utils.stringify(b)] = true end,
+      })
+    end,
+  })
+
+  -- --- 2. LOS INLINES, Y LA FÓRMULA EN BLOQUE QUE ABRE UN PÁRRAFO ---
+  doc:walk({
+    Para = function(b)
+      revisar_formulas_inlines(b.content, b)
+      local primero
+      for _, el in ipairs(b.content) do
+        if el.t ~= "Space" and el.t ~= "SoftBreak" then primero = el; break end
+      end
+      if primero and es_formula_en_bloque(primero) and not hEnCelda[pandoc.utils.stringify(b)] then
+        registrar("formula_abre_parrafo",
+          "la fórmula en bloque abre un párrafo y en el PDF deja un renglón vacío arriba: " ..
+          "va pegada a la frase que la introduce, sin línea en blanco: «" .. contexto_crudo(b) .. "»")
+      end
+    end,
+    Plain = function(b) revisar_formulas_inlines(b.content, b) end,
+    Header = function(b) revisar_formulas_inlines(b.content, b) end,
+    LineBlock = function(b)
+      for _, aLinea in ipairs(b.content) do revisar_formulas_inlines(aLinea, b) end
+    end,
+  })
+end
+
+-- ============================================================================
 -- Función   : Pandoc
 -- Propósito : Corre los controles y escribe el informe y la lista de
 --             cuadros. El documento no se toca.
@@ -819,6 +1023,7 @@ function Pandoc(doc)
   revisar_cifras(doc)
   revisar_espacio_fijo(doc)
   revisar_urls(doc)
+  revisar_formulas(doc)
 
   -- --- EL INFORME: SIEMPRE SE ESCRIBE, VACÍO SI NO HUBO HALLAZGOS ---
   local h = io.open(sRuta, "w")

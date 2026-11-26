@@ -1761,7 +1761,9 @@ PRUEBA DE PUNTA A PUNTA
 
 En el contenedor, con TeX Live 2023, las fuentes de la estética y las cuatro capas reales del preámbulo: un canónico armado por `ensamblar-capitulo-canonico.xsl` con la instrucción en el título y el subtítulo, pasado por `docbook-to-latex.xsl`, con portadilla, portada, una introducción sin número, una parte, un capítulo y un índice. Cortan la portadilla, la portada, las dos aperturas, la parte y el encabezado del índice; el sumario y los marcadores salen en una línea; `pdftitle` y `pdfsubject` con un espacio; ni errores ni avisos de hyperref. Un JATS con `<break/>` valida contra el DTD Archiving 1.4 del proyecto y pasa por las ocho hojas JATS: solo `jats-to-latex` conserva el corte.
 
-**Relaciones:** vinculo:SC-25,vinculo:SC-26,vinculo:SC-63
+LA BASTARDILLA (26/11/2026, SC-111). El título de la base tiene una segunda marca, `*…*`, que sigue esta misma regla: `m_CorteTitulo.Segmentos` parte cada tramo en el asterisco y cada destino la traduce (`<emphasis>`, `<italic>`, `\emph`, nada). `m_CorteTitulo.Plano` quita las dos marcas.
+
+**Relaciones:** vinculo:SC-25,vinculo:SC-26,vinculo:SC-63,vinculo:SC-111
 
 **PENDIENTE:** Probar con un libro y una revista reales en Mint: la prueba fue en el contenedor, sin la base. Del PDF de revista se verificó el .tex que emite jats-to-latex, sin compilar el artículo entero.
 
@@ -1974,9 +1976,13 @@ VERIFICADO EN EL CONTENEDOR
 
 Libro de prueba con Introducción, dos capítulos, Conclusiones y un apéndice, con referencias cruzadas entre todas las piezas, una en una nota y una cita en un pie. PDF, HTML y EPUB dan los mismos números: 1, 1.1, 1.2, 2.1, 1, A.1. El canónico del libro valida contra el RNG. Los casos de error del filtro detienen Pandoc con el mensaje.
 
-**Relaciones:** vinculo:SC-31,vinculo:SC-28,vinculo:SC-25,vinculo:RC-DB-03,apoya:GV-23,vinculo:GV-72,vinculo:GV-73,vinculo:SC-35,vinculo:SC-42,vinculo:SC-53,vinculo:SC-69
+FÓRMULAS (26/11/2026, SC-110). `@eq-nombre` ya no frena en libros: va a `<xref linkend>` como `@fig-` y `@tbl-`, y los id `eq-` son globales. Escribe el número entre paréntesis, «(9.1)», como `\eqref` (decisión de Alberto); el de la figura y el del cuadro siguen sin paréntesis. En revistas sigue frenando.
 
-**PENDIENTE:** Probar en Mint con el libro nuevo que tiene figuras y con una revista. Tablas y ecuaciones siguen el mismo camino en lotes propios: prefijos tbl- y eq- en cite-to-biblioref-db.lua y en db:es-id-global.
+FÓRMULAS EN REVISTAS (26/11/2026, SC-110). La numerada `[$$…$$]{#eq-nombre}` lleva número automático, «(1)», en el `<label>` del canónico, y no tiene remisión: `@eq-` sigue frenando, como `@fig-` y `@tbl-`. El id `eq-` queda para los sabores y los enlaces.
+
+**Relaciones:** vinculo:SC-31,vinculo:SC-28,vinculo:SC-25,vinculo:RC-DB-03,apoya:GV-23,vinculo:GV-72,vinculo:GV-73,vinculo:SC-35,vinculo:SC-42,vinculo:SC-53,vinculo:SC-69,vinculo:SC-110
+
+**PENDIENTE:** Probar en Mint con el libro nuevo que tiene figuras y con una revista.
 
 ### SC-33 — Cierre nombrado de los bloques: [/clase]: # () antes del :::
 
@@ -6332,6 +6338,104 @@ MEDIDO
 Con Duek: el total 152 y cada pieza con sus folios (por ejemplo, la introducción IX–XXII y el capítulo 3, 45–60), cotejados por Alberto contra el PDF.
 
 **Relaciones:** vinculo:SC-25,vinculo:SC-13,vinculo:SC-53,vinculo:SC-108
+
+### SC-110 — Fórmulas: el canónico guarda el TeX del autor y el MathML; el PDF compone el TeX, el HTML y el EPUB copian el MathML; la fórmula en bloque va adentro del párrafo que la introduce
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / Saxon-HE 12.9 / xmllint / LuaLaTeX, TeX Live 2023, unicode-math, Libertinus Math / epubcheck 4.2.6 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 25-26/11/2026), a partir del libro de economía de Iñigo Carrera: fórmulas en línea, sistemas de ecuaciones y fórmulas más anchas que la caja. Lote 1: el libro. Las revistas, la fórmula numerada y los avisos van en el lote 2.
+
+EL .md
+
+- En línea, `$…$`; en bloque, `$$…$$`. La fuente es TeX: lo que deja Pandoc al convertir el Word (OMML) y lo que corrige el editor.
+- La fórmula en bloque va pegada a la frase que la introduce, sin línea en blanco antes. El texto que sigue sin línea en blanco («donde», «siendo, en general») continúa el mismo párrafo y no lleva sangría. Es lo que se hacía en LaTeX y lo que Alberto quiere repetir.
+- Los cortes de una fórmula ancha los decide el editor con amsmath: `aligned` (sistemas, alineados en el = o el ≠), dos renglones con `&` y `&\qquad +` para la ecuación que no entra, `\vdots` entre grupos. El HTML y el EPUB no cortan: la fórmula ancha se desplaza de costado (CSS).
+- Una variable de una letra, `$A$`; de varias letras, `$\mathit{co}$` (decisión de Alberto). Una letra que nombra un caso o una técnica («caso *b*», «la técnica *b*)») no es una variable: bastardilla de texto.
+- La prima es `'`, no la ’ que trae el Word, y va antes del superíndice: `g'^{c}_{x}` (GV-228).
+- Los dólares se escriben USD; un $ como texto, `\$` (GV-227).
+
+EL CANÓNICO. `filters/formula.lua` (cadena del libro, 0c°: después de cuadro-leer y espacio-fijo, antes de todo filtro que serializa) reemplaza cada fórmula por su ecuación con las dos formas:
+
+    <inlineequation><alt role="tex">c_{ij}</alt><mml:math>…</mml:math></inlineequation>
+    <informalequation><alt role="tex">…</alt><mml:math>…</mml:math></informalequation>
+
+El escritor DocBook de Pandoc guarda solo el MathML (GV-229); convertir MathML a TeX en XSLT perdería los cortes del autor. Con el alt antes del MathML el capítulo valida contra DocBook 5.2. Una fórmula adentro de una nota llega con sus dos formas: formula.lua corre antes de cite-to-biblioref-db, que serializa las notas sin --mathml (RC-DB-07). No entra en un bloque `.formula`: ese lo arma fenced-divs-to-elements-db como `<equation xml:id>`, del lote 2.
+
+EL PDF (docbook-to-latex.xsl). Compone desde el alt, sin escaparlo: `$…$` en línea; `\[ … \]` en bloque, con saltos de línea y sin línea en blanco, adentro del párrafo. Un sistema (un solo `aligned` que ocupa toda la fórmula) sale como `align*`: `aligned` es una caja que no se parte, y el sistema a precios de producción del capítulo 10 de Inigo, más alto que la caja de texto, invadía el pie. `align*` tiene las mismas columnas y se parte con `\allowdisplaybreaks`. Un renglón que empieza con `&\qquad` es la continuación de la ecuación anterior: el `\\` que los separa pasa a `\\*` y la página no se corta entre los dos (en el .md no se puede escribir `\\*`, GV-229). Sin alt frena («FÓRMULA SIN SU TeX»: el canónico es anterior a formula.lua). Un `<equation>` frena con su propio mensaje hasta el lote 2. CONTRATO 24 (preambulo-contrato-comun.tex): amsmath explícito, antes de unicode-math, `\allowdisplaybreaks`, y `\decimalpoint` después de babel: el punto decimal también en la fórmula, como \num (SC-64, GV-230).
+
+EL HTML Y EL EPUB (formula-comun.xsl, incluida en docbook-to-html.xsl y docbook-to-epub.xsl). Copian el MathML como `<math>` sin prefijo y descartan el alt; los atributos pierden el prefijo `mml:` (GV-229); la fórmula en bloque lleva `display="block"` y queda adentro del `<p>`. Sin CDN ni JavaScript. El EPUB declara `properties="mathml"` en cada ítem con fórmulas (generar_epub_libro.sh, paso 7b): el OPF lo escribe Gambas antes de los capítulos y no sabe cuáles las tienen. CSS: `math[display="block"]` con desplazamiento horizontal.
+
+PROBADO EN EL CONTENEDOR (26/11/2026), con los capítulos 3, 9 y 10 del libro Inigo por la cadena completa de filtros del libro: los canónicos validan (xmllint, DocBook 5.2); LuaLaTeX con el preámbulo real del libro compila los tres sin errores ni cajas desbordadas (50 páginas), y el sistema largo del capítulo 10 se parte entre dos páginas por una ecuación entera; el EPUB del capítulo 9 pasa epubcheck 4.2.6 sin errores ni advertencias.
+
+LOTE 2a (26/11/2026): EL LIBRO
+
+LA NUMERADA. Se escribe `[$$…$$]{#eq-nombre}`, pegada a la frase que la introduce: queda adentro del párrafo como la otra, y el «donde» que sigue no lleva sangría (decisión de Alberto; Pandoc lo lee como un corchete con id, GV-231). `formula.lua` arma `<equation xml:id="eq-nombre">` con el alt y el MathML. Frena si el id no es `eq-` con letras sin acento, cifras o guiones, si el corchete lleva clases o si adentro no hay una sola fórmula en bloque. El viejo `::: {.formula #eq-…}` frena con un mensaje: cortaba el párrafo y su `<equation>` no tenía el TeX. Los id `eq-` son globales en el libro (`db:es-id-global`), como `fig-` y `tbl-` (SC-32).
+
+EL NÚMERO. El de la figura (SC-32): 9.1 en un capítulo numerado, A.1 en un apéndice, 1 en una pieza sin número; solo las numeradas cuentan. PDF: `\begin{equation}\label{eq-nombre}` con `\theequation` del contrato 9; un sistema numerado (`aligned`) lleva un solo número y no se parte. HTML y EPUB: `<span class="formula-numerada" id="eq-nombre">` adentro del `<p>`, con la fórmula y el número a la derecha (`nl:numero-ecuacion` de numeracion-libro.xsl; CSS con flex).
+
+LA REMISIÓN. `@eq-nombre`, desde cualquier capítulo (cite-to-biblioref-db.lua: `<xref linkend>`). Escribe el número entre paréntesis, «(9.1)», como `\eqref` (decisión de Alberto): PDF `\eqref`; HTML y EPUB, `nl:texto-referencia`. La palabra («la ecuación») la escribe el editor, como en las figuras.
+
+LOS AVISOS (controles_md.lua, todos aviso; decisión de Alberto): `formula_prima` (la ’ adentro de una fórmula), `formulas_pegadas` (dos `$…$` seguidos), `formula_abre_parrafo` (una fórmula en bloque, suelta o numerada, que abre su párrafo: deja un renglón vacío arriba en el PDF), `formula_en_celda`, `matriz_como_sistema`, `variable_como_texto` (bastardilla con subíndice, superíndice o prima: `*r~V~*`, `*g’*`), `dolar_us` (US$, U$S: va USD) y `letra_en_bastardilla` (una letra sola en bastardilla, salvo el rótulo seguido de paréntesis o prima: `*b*)`, `*d*′)`). En el libro Inigo: capítulo 4, 83 variables como texto y 87 letras solas; capítulo 3, 18 fórmulas que abren párrafo y 12 primas. La pasada de controles ya no muestra «Could not convert TeX math» (comun.sh, GV-231).
+
+LAS PRIMAS DE RÓTULO (limpiar_docx.lua, pasada 5b, decisión de Alberto). Un rótulo con variantes, «la técnica *d*′)», «*d*″)», llega del Word como `d’)` y `d”)`: el autor teclea `'` y `"` y el autocorrector los cambia. La pasada de comillas tomaba la ” por una de cierre y dejaba `d»)`. Antes de las comillas, una letra suelta seguida de la marca (’ ' ” ") y un paréntesis de cierre pasa a ′ (U+2032) o ″ (U+2033), también con la letra en otro tramo de cursiva. «l’État» y «ád’)» quedan. La forma del .md: la letra en bastardilla, la prima y el paréntesis en redonda, `*d*′)`; Libertinus Serif tiene los dos caracteres.
+
+PROBADO EN EL CONTENEDOR (26/11/2026): una numerada en el capítulo 10 de Inigo, con una remisión desde el mismo capítulo y otra desde el 9: los canónicos validan; el PDF da «(3.1)» a la derecha de la fórmula y en las dos remisiones (tercer capítulo de la prueba), con enlace; el EPUB da el mismo número y enlaza al otro capítulo, y pasa epubcheck sin errores ni advertencias. Los controles, sobre un archivo de prueba con un caso de cada aviso y sobre los capítulos 3, 4, 9 y 11. La limpieza, sobre un párrafo con las ocho formas y comillas reales.
+
+LOTE 2b (26/11/2026): LAS REVISTAS
+
+El mismo modelo que el libro (decisión de Alberto): el canónico JATS guarda el TeX y el MathML en `<alternatives>`, que el escritor de Pandoc ya pone (GV-229); el PDF compone el TeX; el HTML y el EPUB copian el MathML, sin MathJax ni CDN.
+
+LA NUMERADA. Se escribe igual que en el libro, `[$$…$$]{#eq-nombre}`. `formula-jats.lua` (FILTROS_REVISTA, después de espacio-fijo) arma `<disp-formula id="eq-nombre"><label>(1)</label><alternatives>…`: el número es automático, en el orden del artículo, y va en el canónico, para que el PDF, el HTML, el EPUB y los sabores (SciELO lee el `<label>`) muestren el mismo. Frena en los mismos casos que `formula.lua`. No hay remisión: `@eq-` sigue frenando en `cite-to-xref.lua` y la mención («la ecuación (2)») la escribe el autor (SC-32).
+
+PDF (`jats-a-latex-articulo.xsl`). Plantillas propias, que ganan a las de `jats-to-latex.xsl`: la de `mml:math` escribía un texto provisorio pegado al TeX en cada fórmula. En línea, `$…$`; en bloque, `\[…\]`, o `align*` si la fórmula es un solo `aligned` (se parte entre páginas; `\\*` antes del renglón que empieza con `&\qquad`); la numerada, `equation*` con `\tag*{(n)}` del `<label>`, y un sistema numerado no se parte. Sin `<tex-math>` frena. El `\decimalpoint` del contrato común 24 vale también para la revista: «3.5» sale con punto.
+
+HTML Y EPUB. `formula-jats-comun.xsl`, incluido en `jats-a-html-articulo.xsl` y `jats-a-epub-articulo.xsl`: `<math>`, `<math display="block">` o `<span class="formula-numerada">` con el número, el mismo armado que el libro y las mismas reglas de CSS (`gbpublisher.css` para el HTML; `gbpublisher-epub-revista.css`, sección 19, para el EPUB). Vale igual en el texto, en el panel de notas del HTML (`nota-panel`) y en las notas finales del EPUB (`text-only`): en una nota, la fórmula también es MathML. La copia del MathML pasó a `mathml-comun.xsl`, que incluyen las dos (`formula-comun.xsl` del libro y `formula-jats-comun.xsl`). Cada hoja declara `gbfj:ns-html`: vacío en el HTML (`method="html"`), XHTML en el EPUB; sin ella no compila.
+
+EL OPF. `numero-a-epub.xsl` mira el canónico de cada artículo, como ya hacía con las imágenes, y pone `properties="mathml"` al que tiene fórmulas (sin eso, epubcheck da OPF-014). No hace falta una pasada posterior.
+
+PROBADO EN EL CONTENEDOR (26/11/2026) con un artículo de prueba (`a-01-prueba.md` del lote): fórmulas en línea, un sistema de tres renglones, uno de nueve que cruza la página con un renglón de continuación, tres numeradas (una es un sistema), una fórmula en línea y otra en bloque en las notas, y `$3.5$`. El cuerpo, con la cadena y los argumentos de `generar_canonicos_articulos.sh`. El PDF compila con los preámbulos de la revista y el contrato común 24. El HTML y el EPUB dan 17 `<math>` y los números (1), (2), (3). El EPUB de un número con ese artículo pasa epubcheck sin errores ni advertencias.
+
+**Relaciones:** vinculo:SC-31,vinculo:SC-32,vinculo:SC-64,vinculo:RC-DB-07,vinculo:RC-DB-03,vinculo:GV-227,vinculo:GV-228,vinculo:GV-231,vinculo:SC-40,vinculo:GV-232
+
+**PENDIENTE:** Probar en Mint con el libro Inigo: una numerada, sus remisiones y los avisos.
+Probar en Mint con una revista: un número de prueba con a-01-prueba.md (canónicos, PDF, HTML y EPUB), y ver el MathML del HTML en el navegador.
+Los sabores JATS (SciELO con packtools, Redalyc, Crossref) con <alternatives> y <label> en <disp-formula>: en su fase.
+gbShortcodes: las filas disp-formula y numbered-equation tienen la sintaxis vieja (::: {.formula} y ::: numbered-equation): rehacerlas con [$$…$$]{#eq-…} y sumar el sistema de ecuaciones como plantilla.
+RC-DB-03 dice que <equation> exige title, y el RNG de DocBook 5.2 valida un <equation> sin title (GV-229): revisar RC-DB-03.
+
+### SC-111 — Bastardilla en los títulos de la base: el editor escribe *…*, una marca de gbpublisher que cada destino traduce, como el corte de SC-28
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / Saxon-HE 12.9 / LuaLaTeX, TeX Live 2023, IBM Plex Sans Condensed, Libertinus / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 26/11/2026). Un título o un subtítulo que se carga en el formulario puede llevar una parte en bastardilla: el título de una obra («… a propósito del libro de Fred Moseley *Money and Totality*», capítulo 13 de Inigo), un nombre científico. Antes los asteriscos y `\emph{}` llegaban literales al PDF: `m_XML.TituloXML` escapaba el título como texto, y aunque el canónico hubiera traído la marca, `f:titulo-compuesto` y `f:titulo-plano` lo aplanaban a cadena.
+
+LA MARCA. `*…*`, la del Markdown (decisión de Alberto). No es LaTeX: es vocabulario de gbpublisher, como el `\\` del corte (SC-28), y la regla de SC-25 sigue: nunca LaTeX en la base. `\emph{}` en un campo de título no se interpreta.
+
+ALCANCE. Todo lo que pasa por `m_XML.TituloXML` (decisión de Alberto): título y subtítulo de capítulo, de libro y de artículo, y los títulos traducidos del artículo. Los títulos de parte, de las piezas que arma el PDF (índices, bibliografía) y el abreviado pasan por las funciones de LaTeX de `m_GenerarPDFLibro`, que también la traducen.
+
+UNA SOLA REGLA DE PARTICIÓN. `m_CorteTitulo.Segmentos` parte un tramo en el asterisco: los segmentos pares van en redonda, los impares en bastardilla. Como `Tramos`, no escapa: quien llama escapa cada segmento y envuelve los impares. El orden sigue siendo partir, escapar, unir.
+
+    DocBook   <emphasis>…</emphasis>       m_XML.TituloXML (TramoXML)
+    JATS      <italic>…</italic>           m_XML.TituloXML; el volcado la lleva y datos-a-front-jats.xsl la copia (modo titulo)
+    LaTeX     \emph{…}                     m_GenerarPDFLibro (TramoTeX); f:titulo-compuesto y f:titulo-plano (tex-comun.xsl)
+    plano     sin los asteriscos           m_CorteTitulo.Plano: OPF, JSON de gbWeb, ficha, metadatos del PDF, árbol
+
+`\emph` y no `\textit`: la apertura y el subtítulo que la estética compone en bastardilla dan redonda (el enroque). La versión plana del LaTeX también lleva `\emph`: el sumario y el folio la componen, y hyperref la quita de los marcadores y de `pdftitle` sin avisar (GV-233). Por eso no hace falta una tercera versión del título.
+
+EL HTML Y EL EPUB DEL LIBRO. El encabezado del capítulo (título y subtítulo) y el título del libro en el HTML se recorren por nodos: la `<emphasis>` sale en `<em>`; el `<title>` de la página y el índice siguen planos. El HTML y el EPUB de la revista ya recorrían el `article-title`.
+
+LO QUE NO ES MARCA. Un asterisco sin pareja es texto: `Segmentos` devuelve el último como «*». No se frena al guardar, porque un título real puede llevar uno y un descuido se ve en la salida. La bastardilla no cruza un corte: cada tramo se parte por separado, y un `*…*` partido por `\\` deja dos asteriscos sueltos, que salen como texto. `**` no escribe nada (no hay negrita en los títulos).
+
+PROBADO EN EL CONTENEDOR (26/11/2026):
+- Gambas 3.19, las funciones nuevas sobre siete títulos (con corte, con `&` y `<`, con un asterisco suelto, con `**`, con la bastardilla cruzando el corte, vacío): DocBook, JATS, LaTeX compuesto y plano, y plano.
+- El capítulo 10 de Inigo con el título del 13 y un subtítulo con una obra, por `docbook-to-latex.xsl` y los cuatro preámbulos reales del libro: la apertura sale en IBM Plex Sans Condensed Italic, el sumario con la cursiva, el subtítulo con el enroque y el marcador plano, sin avisos de fuente ni de hyperref.
+- `docbook-to-epub.xsl` y la cabeza del capítulo de `docbook-to-html.xsl` dan `<em>`; `datos-a-front-jats.xsl` copia la `<italic>`.
+
+**Relaciones:** vinculo:SC-28,vinculo:SC-25,vinculo:SC-63,apoya:GV-233
+
+**PENDIENTE:** Probar en Mint: el capítulo 13 de Inigo en PDF, HTML y EPUB; un artículo con *…* en el título (canónico, PDF, HTML, EPUB, SciELO).
+Crossref admite <i> en los títulos y hoy recibe el título plano.
+El sumario del PDF del número (numero-maestro-latex.xsl) arma el título con f:titulo-tramos: sale sin la cursiva.
 
 ---
 
@@ -11474,13 +11578,15 @@ LÍMITE. Pandoc no cierra una fórmula con un `$` precedido de espacio; el resal
 
 LOS TEMAS. La clave `Value` de `[Markdown]` de cada uno de los nueve temas toma el color de `[XML] String`, el de los valores de atributo del visor XML (decisión de Alberto, 26/11). En gruvbox, flexoki, gbpflexoki y los dos solarizados coincide con el color del código del .md: no molesta (decisión de Alberto).
 
+PROBADO EN LA APLICACIÓN (Alberto, 26/11/2026; Mint, Gambas 3.22.2, tema gruvbox): el capítulo 9 del libro Inigo, con las fórmulas en línea y el `aligned` enteros en verde y el texto sin manchas.
+
 **Relaciones:** vinculo:SC-15,vinculo:GV-119,vinculo:GV-120,vinculo:GV-48,vinculo:GV-76
 
-**PENDIENTE:** Confirmar en la aplicación (Mint) el capítulo 9 del libro Inigo con el tema gruvbox. Medir en 3.22.2 si un estilo propio ({Matematica}) sale con su nombre en Styles: el banco trae math-propio.highlight.
+**PENDIENTE:** Medir en 3.22.2 si un estilo propio ({Matematica}) sale con su nombre en Styles: el banco trae math-propio.highlight.
 
 ### GV-228 — La prima de las fórmulas del Word es U+2019 (’), no un apóstrofo; con ' LaTeX exige la prima antes del superíndice: g'_{x}^{c} da «Double superscript»
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / pdflatex, amsmath / TeX Live 2023 / contenedor Ubuntu 24.04; Word (OMML) del libro Inigo · **Verificado:** 2026-11
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / pdflatex, amsmath / TeX Live 2023 / contenedor Ubuntu 24.04; Word (OMML) del libro Inigo / LuaLaTeX, unicode-math, Libertinus Math (26/11/2026) · **Verificado:** 2026-11
 
 Medido el 25-26/11/2026 sobre el libro Inigo (capítulos con ecuaciones de Word, OMML), con Pandoc 3.1.3 y pdflatex (TeX Live 2023) en el contenedor.
 
@@ -11495,9 +11601,108 @@ Con ’ el error no aparecía porque para TeX es un carácter común. La forma c
 
 DECISIÓN DE ALBERTO (25/11): la prima no se corrige sola al convertir; se avisa y la corrige el editor.
 
-**Relaciones:** vinculo:GV-207
+CONFIRMADO CON LA COMPOSICIÓN REAL (26/11/2026, GV-230): LuaLaTeX con babel-spanish y unicode-math con Libertinus Math. `$s’ = 1$` imprime la comilla; `$s' = 1$`, la prima. `$g'_{\overline{x}}^{c}$` da «Double superscript» también con unicode-math; `$g'^{c}_{\overline{x}}$` compone bien.
 
-**PENDIENTE:** Medir con LuaLaTeX, babel-spanish y unicode-math con Libertinus Math (la composición real): cómo sale la ’ y si g'_{x}^{c} también da «Double superscript» (unicode-math maneja la prima por su cuenta).
+**Relaciones:** vinculo:GV-207,apoya:SC-110,vinculo:GV-230
+
+### GV-229 — Pandoc 3.1.3 y la matemática: el JATS trae el TeX y el MathML; el DocBook, solo el MathML, con atributos mml: que un navegador no reconoce; un alt con el TeX valida
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / xmllint / DocBook 5.2 RNG / Saxon-HE 12.9 / epubcheck 4.2.6 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido el 25-26/11/2026 en el contenedor, con el capítulo 9 del libro Inigo.
+
+JATS (`--to jats`, con o sin `--mathml`). En línea y en bloque, Pandoc escribe las dos formas:
+
+    <inline-formula><alternatives><tex-math>…</tex-math><mml:math>…</mml:math></alternatives></inline-formula>
+
+La fórmula en bloque sale como `<disp-formula>` adentro de un `<p>`.
+
+DocBook (`--to docbook5 --mathml`). Solo el MathML: `<inlineequation><mml:math>` y `<informalequation><mml:math>`. El TeX se pierde. La fórmula en bloque queda adentro del `<para>` cuando en el .md no hay línea en blanco antes del `$$`.
+
+ATRIBUTOS CON PREFIJO. El escritor DocBook escribe `mml:columnalign`, `mml:accent`, `mml:stretchy`, `mml:style` (con prefijo). El RNG de DocBook acepta cualquier atributo dentro de MathML y el capítulo valida; un navegador no los reconoce: la barra de `\overline{x}` saldría como límite y no como acento. Al copiar el MathML al HTML y al EPUB se quita el prefijo.
+
+EL alt VALIDA. `<alt role="tex">` antes del MathML, en `inlineequation` e `informalequation`, valida con xmllint contra `docbook.rng-5.2`: el esquema define `alt` opcional antes del contenido. Un `<equation xml:id>` sin `<title>` también valida.
+
+texmath convierte `aligned`, `split`, `multline` y `matrix` en `mtable`: los cortes del autor llegan al MathML. `\\*` (el salto sin corte de página de amsmath) no lo entiende: lo lee como `\\` y un `<mo>*</mo>` suelto al comienzo del renglón siguiente. La prima `g'^{c}_{x}` sale como `<mi>g</mi><msubsup><mi>′</mi>…`: el subíndice y el superíndice cuelgan de la prima; a la vista, igual.
+
+EPUB. Con el MathML copiado sin prefijo y `display="block"`, epubcheck 4.2.6 da 0 errores y 0 advertencias. Sin `properties="mathml"` en el ítem del OPF da OPF-014 («The property mathml should be declared in the OPF file»).
+
+**Relaciones:** apoya:SC-110,vinculo:RC-DB-03,vinculo:RC-DB-07,vinculo:GV-207
+
+### GV-230 — babel-spanish cambia el punto de una fórmula por coma: $3.5$ sale «3,5» y \num{3.5} «3.5»; \decimalpoint después de babel lo arregla, es-nodecimaldot como opción de babel no
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaLaTeX / TeX Live 2023 / babel-spanish / siunitx / unicode-math, Libertinus Math / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido el 26/11/2026 con LuaLaTeX (TeX Live 2023) y el preámbulo real del libro Inigo (babel con main=spanish, siunitx con detect-all, unicode-math con Libertinus Math):
+
+    $3.5$ y $0.25 x$     →  3,5 y 0,25𝑥
+    \num{3.5}            →  3.5
+
+Contradice SC-64 (punto decimal) dentro de una misma página.
+
+- `\usepackage[\gbidiomas,es-nodecimaldot]{babel}` y `\PassOptionsToPackage{es-nodecimaldot}{babel}`: «Package babel Error: Unknown option es-nodecimaldot». babel la toma como un idioma.
+- `\ifdefined\decimalpoint\decimalpoint\fi` justo después de babel: `$3.5$` sale «3.5», sin errores. `\decimalpoint` es de spanish.ldf (`\spanishdecimal{.}`); sin castellano en el libro no existe, y el `\ifdefined` lo saltea.
+
+Con el mismo preámbulo se confirmó GV-228: `$s’$` imprime la comilla, `$s'$` la prima, y `$g'_{x}^{c}$` da «Double superscript» también con unicode-math.
+
+**Relaciones:** apoya:SC-110,vinculo:SC-64,vinculo:GV-123,vinculo:GV-228
+
+### GV-231 — Pandoc 3.1.3 lee [$$…$$]{#eq-x} como un corchete con id adentro del párrafo; $$…$$ {#eq-x} deja el id como texto; el escritor plain no convierte las fórmulas complejas y avisa «Could not convert TeX math»
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor Ubuntu 24.04; el aviso, también en Mint (Alberto, 26/11/2026) · **Verificado:** 2026-11
+
+Medido el 26/11/2026 en el contenedor.
+
+LA NUMERADA EN EL PÁRRAFO. Con la frase, la fórmula y el «donde» sin líneas en blanco:
+
+    Texto que la introduce
+    [$$E = mc^2$$]{#eq-energia}
+    donde $E$ es la energía.
+
+da un solo Para con `Span ("eq-energia", [], []) [Math DisplayMath "E = mc^2"]` en el medio. `$$…$$ {#eq-suma}` (la forma de pandoc-crossref) da la fórmula seguida de `Str "{#eq-suma}"`: el id queda como texto. `::: {.formula #eq-x}` es un bloque aparte: corta el párrafo.
+
+EL ESCRITOR plain. La pasada de controles (comun.sh, `--to plain`) pasa cada fórmula a texto Unicode con texmath; no puede con fracciones, `aligned` ni la ’, y escribe en stderr «[WARNING] Could not convert TeX math …, rendering as TeX», con el TeX de varios renglones. No afecta a las salidas: la conversión al canónico (formula.lua, `--mathml`) no lo da. comun.sh descarta esas líneas al mostrar los avisos del lector (Alberto lo aplicó el 26/11).
+
+**Relaciones:** apoya:SC-110,vinculo:GV-229
+
+### GV-232 — Pandoc 3.1.3: pandoc.write de un Plain a JATS lo envuelve en <p>; sin --wrap=none, el salto de renglón después de $$…$$ llega al canónico JATS y en el TeX es un renglón vacío
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / Saxon-HE 12.9 / LuaLaTeX, contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido el 26/11/2026 en el contenedor.
+
+pandoc.write A JATS. `pandoc.write(pandoc.Pandoc({pandoc.Plain({math})}), 'jats', {wrap_text = 'none'})` devuelve `<p><disp-formula>…</disp-formula></p>`: el escritor no tiene forma de bloque suelto para un Plain. `formula-jats.lua` quita el `<p>` de los extremos antes de agregar el `<label>` y devuelve un RawInline `jats`, que queda adentro del párrafo del autor.
+
+EL SALTO DESPUÉS DE LA FÓRMULA. Con el .md
+
+    La unidad se expresa en
+    [$$…$$]{#eq-unidad}
+    y la tasa media en
+
+y Pandoc sin `--wrap=none`, el texto que sigue a `</disp-formula>` empieza con un salto de renglón y una sangría. Una plantilla de LaTeX que cierra el entorno con su propio salto (`\end{equation*}` y un `\n`) deja dos saltos seguidos: un renglón vacío, párrafo nuevo, y «y la tasa media en» sale con sangría. Con `--wrap=none` (el de `generar_canonicos_articulos.sh` y `generar_canonicos_capitulos.sh`) el salto es un espacio y el texto sigue el párrafo sin sangría. Una prueba fuera de la cadena tiene que usar los mismos argumentos.
+
+**Relaciones:** apoya:SC-110,vinculo:GV-229,vinculo:GV-231
+
+### GV-233 — Split con un separador de un carácter conserva los elementos vacíos y con texto vacío da cero elementos; hyperref quita \emph de los marcadores y de pdftitle sin avisar
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / LuaLaTeX, TeX Live 2023, hyperref / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido el 26/11/2026 en el contenedor.
+
+SPLIT (Gambas 3.19). Con el asterisco como separador:
+
+    "Sobre *Money and Totality*"   →  [Sobre ] [Money and Totality] []
+    "*X*"                          →  [] [X] []
+    "a*b"                          →  [a] [b]
+    "**b**"                        →  [] [] [b] [] []
+    "cañón *ñandú* ü"              →  [cañón ] [ñandú] [ ü]
+    ""                             →  ningún elemento
+
+Los vacíos de los extremos y del medio quedan (lo mismo que GV-185 con un separador de varios caracteres), y con eso el índice dice qué va en bastardilla: impar, adentro de un par de asteriscos. Un número par de elementos es un asterisco sin pareja. Con texto vacío no hay elementos: quien recorre el resultado no debe suponer uno. El separador es ASCII y no corta un carácter multibyte. `Else If` compila y anda.
+
+hyperref (TeX Live 2023, LuaLaTeX). `\hypersetup{pdftitle={Sobre \emph{Money and Totality}}}` y `\chapter[… \emph{Money and Totality}]{…}` con `bookmarks`: el título del PDF y el marcador salen «Sobre Money and Totality», sin el `\emph`, y hyperref no da «Token not allowed» ni otro aviso. El sumario compone la cursiva. Medido también con los cuatro preámbulos del libro Inigo y `\gbCapitulo` (pypdf lee el marcador plano).
+
+**Relaciones:** apoya:SC-111,vinculo:GV-185
 
 ---
 

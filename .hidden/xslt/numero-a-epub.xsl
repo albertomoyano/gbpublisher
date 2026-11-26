@@ -88,6 +88,15 @@
     for $a in $d/articulo
     return doc(gbn:uri-archivo(concat($dir_canonicos, '/c-', $a/@archivo, '.xml')))//fig/graphic/@xlink:href
            ! tokenize(normalize-space(.), '/')[last()][. ne ''])"/>
+  <!-- LOS ARTÍCULOS CON FÓRMULAS (SC-110): SU XHTML LLEVA MathML Y EL
+       OPF TIENE QUE DECLARARLO CON properties="mathml"; SIN ESO,
+       epubcheck DA OPF-014. SE MIRA EL CANÓNICO, COMO LAS IMÁGENES:
+       jats-a-epub-articulo.xsl ESCRIBE UN <math> POR CADA FÓRMULA -->
+  <xsl:variable name="articulos-con-formulas" as="xs:string*" select="
+    for $a in $d/articulo
+    return string($a/@archivo)[exists(doc(gbn:uri-archivo(concat($dir_canonicos, '/c-', $a/@archivo, '.xml')))
+                                      //(inline-formula | disp-formula))]"/>
+
   <!-- LA TAPA VA PRIMERO: ES LA cover-image -->
   <xsl:variable name="imagenes" as="xs:string*" select="distinct-values(($tapa[. ne ''], $imagenes-articulos))"/>
 
@@ -522,7 +531,12 @@
           <item id="{@archivo}" href="{gbn:href-pieza(.)}" media-type="application/xhtml+xml"/>
         </xsl:for-each>
         <xsl:for-each select="$d/articulo">
-          <item id="{@archivo}" href="chapters/{@archivo}.xhtml" media-type="application/xhtml+xml"/>
+          <item id="{@archivo}" href="chapters/{@archivo}.xhtml" media-type="application/xhtml+xml">
+            <!-- EL ARTÍCULO CON FÓRMULAS: MathML (SC-110) -->
+            <xsl:if test="string(@archivo) = $articulos-con-formulas">
+              <xsl:attribute name="properties">mathml</xsl:attribute>
+            </xsl:if>
+          </item>
         </xsl:for-each>
       </manifest>
 

@@ -71,6 +71,10 @@
   <!-- NOTA CON SÍMBOLO (SC-86): EL SIGNO DE CADA label DEL CANÓNICO -->
   <xsl:include href="nota-simbolo-comun.xsl"/>
 
+  <!-- FÓRMULAS (SC-110): EL MathML DEL CANÓNICO, SIN PREFIJOS Y CON
+       display="block" EN LA FÓRMULA EN BLOQUE. COMÚN CON EL HTML -->
+  <xsl:include href="formula-comun.xsl"/>
+
   <!-- ================================================
        PARÁMETROS DE ENTRADA
        ================================================ -->
@@ -272,8 +276,13 @@
         <section epub:type="chapter" class="capitulo">
 
           <!-- TÍTULO DEL CAPÍTULO -->
+          <!-- POR NODOS: LA BASTARDILLA DE LA BASE (<emphasis>, SC-111)
+               SALE EN <em>; EL CORTE NO ESCRIBE NADA (SC-28) -->
           <xsl:if test="$titulo != ''">
-            <h1 class="cap-titulo"><xsl:value-of select="$titulo"/></h1>
+            <h1 class="cap-titulo">
+              <xsl:apply-templates select="($cap/db:info/db:title | $cap/db:title
+                                            | $cap/info/title | $cap/title)[1]/node()"/>
+            </h1>
           </xsl:if>
 
           <xsl:variable name="capInfo" select="($cap/db:info | $cap/info)[1]"/>
@@ -285,7 +294,9 @@
           <xsl:variable name="subtitulo"
             select="normalize-space(($capInfo/db:subtitle | $capInfo/subtitle)[1])"/>
           <xsl:if test="$subtitulo != ''">
-            <p class="cap-subtitulo"><xsl:value-of select="$subtitulo"/></p>
+            <p class="cap-subtitulo">
+              <xsl:apply-templates select="($capInfo/db:subtitle | $capInfo/subtitle)[1]/node()"/>
+            </p>
           </xsl:if>
 
           <!-- AUTORÍA DEL CAPÍTULO (si tiene) -->

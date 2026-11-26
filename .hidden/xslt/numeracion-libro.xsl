@@ -194,8 +194,25 @@
   </xsl:function>
 
   <!-- ==========================================================
+       nl:numero-ecuacion: EL NÚMERO VISIBLE DE UNA FÓRMULA NUMERADA
+       (<equation>, SC-110). LA MISMA REGLA QUE LA FIGURA: EN EL PDF,
+       \theequation REINICIA CON LA PIEZA (CONTRATO 9). LAS FÓRMULAS SIN
+       NÚMERO (informalequation, \[ \], align*) NO CUENTAN.
+       ========================================================== -->
+  <xsl:function name="nl:numero-ecuacion" as="xs:string">
+    <xsl:param name="eq" as="element()"/>
+    <xsl:param name="piezas" as="element()*"/>
+    <xsl:variable name="p" select="nl:pieza-de($eq)"/>
+    <xsl:variable name="n" select="count($p//*:equation[. &lt;&lt; $eq]) + 1"/>
+    <xsl:variable name="etiqueta" select="nl:etiqueta-pieza($p, $piezas)"/>
+    <xsl:sequence select="if ($etiqueta = '') then string($n)
+                          else concat($etiqueta, '.', $n)"/>
+  </xsl:function>
+
+  <!-- ==========================================================
        nl:texto-referencia: LO QUE MUESTRA LA REFERENCIA. SOLO EL
-       NÚMERO, COMO \ref: LA PALABRA LA ESCRIBE EL EDITOR.
+       NÚMERO, COMO \ref: LA PALABRA LA ESCRIBE EL EDITOR. LA FÓRMULA,
+       ENTRE PARÉNTESIS, COMO \eqref: «(9.1)» (SC-110).
        ========================================================== -->
   <xsl:function name="nl:texto-referencia" as="xs:string">
     <xsl:param name="destino" as="element()?"/>
@@ -205,6 +222,8 @@
                           then nl:numero-figura($destino, $piezas)
                           else if (local-name($destino) = 'table')
                           then nl:numero-cuadro($destino, $piezas)
+                          else if (local-name($destino) = 'equation')
+                          then concat('(', nl:numero-ecuacion($destino, $piezas), ')')
                           else '??'"/>
   </xsl:function>
 

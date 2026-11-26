@@ -237,6 +237,7 @@ end
 -- APLICA m_XML.GenerarBiblioCapituloXML AL xml:id DEL <biblioentry>.
 -- =====================================================
 -- REFERENCIAS CRUZADAS: @fig-nombre → <xref linkend="fig-nombre"/>
+-- (Y @tbl-, @eq-)
 -- =====================================================
 -- PANDOC LEE @fig-mapa COMO UNA CITA. LO QUE LA DISTINGUE DE UNA CITA
 -- BIBLIOGRÁFICA ES EL PREFIJO DE LA CLAVE: LAS CLAVES DE LA BASE
@@ -247,14 +248,16 @@ end
 -- CAPÍTULO TIENE QUE FUNCIONAR IGUAL.
 -- LA REFERENCIA PRODUCE SOLO EL NÚMERO; LA PALABRA («figura»,
 -- «Figura», «figuras») LA ESCRIBE EL EDITOR.
--- tbl-: LOS CUADROS (SC-66). AGREGAR eq- CUANDO LAS FÓRMULAS TENGAN SU LOTE.
-local prefijos_referencia = { 'fig-', 'tbl-' }
+-- tbl-: LOS CUADROS (SC-66). eq-: LAS FÓRMULAS NUMERADAS (SC-110); EL
+-- NÚMERO SALE ENTRE PARÉNTESIS, «(9.1)», COMO \eqref (DECISIÓN DE ALBERTO,
+-- 26/11): LO PONEN LAS HOJAS, ACÁ SOLO SE ARMA EL <xref>.
+local prefijos_referencia = { 'fig-', 'tbl-', 'eq-' }
 
--- REFERENCIAS A ECUACIONES Y LISTADOS DE CÓDIGO (SC-42): TODAVÍA
--- NO EXISTEN. HASTA SU LOTE DETIENEN LA CONVERSIÓN: SIN ESTO SALDRÍAN
--- COMO CITA BIBLIOGRÁFICA A UNA REFERENCIA INEXISTENTE. EN REVISTAS
--- FRENAN SIEMPRE (cite-to-xref.lua): ALLÍ NO HAY REFERENCIA CRUZADA (SC-32).
-local prefijos_pendientes = { 'eq-', 'lst-' }
+-- REFERENCIAS A LISTADOS DE CÓDIGO (SC-42): TODAVÍA NO EXISTEN. HASTA SU
+-- LOTE DETIENEN LA CONVERSIÓN: SIN ESTO SALDRÍAN COMO CITA BIBLIOGRÁFICA A
+-- UNA REFERENCIA INEXISTENTE. EN REVISTAS FRENAN SIEMPRE, TAMBIÉN eq-
+-- (cite-to-xref.lua): ALLÍ NO HAY REFERENCIA CRUZADA (SC-32).
+local prefijos_pendientes = { 'lst-' }
 
 local function es_referencia(clave)
   for _, prefijo in ipairs(prefijos_referencia) do
@@ -272,9 +275,8 @@ function Cite(el)
     for _, prefijo in ipairs(prefijos_pendientes) do
       if citation.id:sub(1, #prefijo) == prefijo then
         error('\n[referencia] @' .. citation.id .. ': las referencias cruzadas ' ..
-              'a ecuaciones y listados todavía no están implementadas. Por ' ..
-              'ahora la mención se escribe como texto («ecuación 3», ' ..
-              '«código 2.1»).', 0)
+              'a listados de código todavía no están implementadas. Por ' ..
+              'ahora la mención se escribe como texto («código 2.1»).', 0)
       end
     end
   end
@@ -287,7 +289,7 @@ function Cite(el)
     if es_referencia(citation.id) then referencias = referencias + 1 end
   end
   if referencias > 0 and referencias < #el.citations then
-    error('\n[referencia] Un mismo grupo mezcla referencias a figuras o cuadros y citas ' ..
+    error('\n[referencia] Un mismo grupo mezcla referencias a figuras, cuadros o fórmulas y citas ' ..
           'bibliográficas: ' .. pandoc.utils.stringify(el.content) ..
           '. Se escriben por separado.', 0)
   end

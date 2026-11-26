@@ -57,8 +57,9 @@
   xmlns:gbct="urn:gbpublisher:citas"
   xmlns:gbcj="urn:gbpublisher:citas-jats"
   xmlns:gbrc="urn:gbpublisher:revista-comun"
+  xmlns:gbfj="urn:gbpublisher:formula-jats"
   xmlns:gbh="urn:gbpublisher:revista-html"
-  exclude-result-prefixes="xs xlink ali gbc gbct gbcj gbrc gbh">
+  exclude-result-prefixes="xs xlink ali gbc gbct gbcj gbrc gbh gbfj">
 
   <!-- EL CUERPO ES EL DE LA HOJA VIEJA. LO QUE ESTA HOJA DEFINE GANA POR
        PRECEDENCIA DE IMPORTACIÓN -->
@@ -68,6 +69,14 @@
   <xsl:include href="revista-comun.xsl"/>
   <xsl:include href="cita-comun.xsl"/>
   <xsl:include href="cita-fragmentos.xsl"/>
+
+  <!-- LAS FÓRMULAS COMO MathML (SC-110): GANAN A LAS DE LA HOJA VIEJA,
+       QUE ESCRIBÍAN EL TeX COMO CÓDIGO -->
+  <xsl:include href="formula-jats-comun.xsl"/>
+
+  <!-- EL ESPACIO DE NOMBRES DE LOS span QUE ARMA formula-jats-comun.xsl:
+       NINGUNO, LA SALIDA ES method="html" -->
+  <xsl:variable name="gbfj:ns-html" as="xs:string" select="''"/>
 
   <xsl:output method="html" html-version="5" encoding="UTF-8" indent="no"/>
 

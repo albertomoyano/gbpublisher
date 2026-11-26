@@ -411,6 +411,91 @@ local pasada_elision = {
   end,
 }
 
+-- --- 5b. PRIMA Y DOBLE PRIMA DE UN RÓTULO: d’) → d′), d”) → d″) ---
+-- UN RÓTULO DE CASO O DE TÉCNICA CON VARIANTES (*d*′), *d*″), SC-110): EL
+-- AUTOR TECLEA ' Y " Y EL AUTOCORRECTOR DE WORD LOS CAMBIA POR ’ Y ”. LA
+-- PASADA DE COMILLAS TOMARÍA LA ” POR UNA DE CIERRE Y DEJARÍA d»), Y LA ’
+-- QUEDARÍA COMO COMILLA. EL PATRÓN ES MUY ACOTADO —UNA SOLA LETRA, LA MARCA
+-- Y UN PARÉNTESIS DE CIERRE— Y EN PROSA NO APARECE (MEDIDO EN EL LIBRO
+-- INIGO, CAPÍTULO 11: d’), d”), a’), a”), e’), e”), 23 EN TOTAL). VA ANTES
+-- DE LAS COMILLAS: ASÍ UNA " QUE ERA DOBLE PRIMA NO ENTRA EN LA
+-- ALTERNANCIA DE LAS RECTAS. LA CURSIVA NO SE TOCA: EL AUTOR A VECES TOMA EL
+-- PARÉNTESIS Y A VECES NO, Y ESO LO RESUELVE EL EDITOR CON EL AVISO
+local PRIMA       = "\u{2032}"
+local DOBLE_PRIMA = "\u{2033}"
+local MARCAS_PRIMA = {
+  { "\u{2019}", PRIMA },        -- ’ DEL AUTOCORRECTOR
+  { "'",         PRIMA },        -- ' SIN AUTOCORRECCIÓN
+  { "\u{201D}", DOBLE_PRIMA },  -- ” DEL AUTOCORRECTOR
+  { '"',         DOBLE_PRIMA },  -- " SIN AUTOCORRECCIÓN
+}
+
+-- UNA LETRA SUELTA: ASCII, CON LA FRONTERA QUE TAMBIÉN MIRA LOS BYTES DE
+-- LAS LETRAS ACENTUADAS (á, ñ): EN «ád’)» LA d NO ES UNA LETRA SUELTA
+local LETRA_SUELTA = "%f[%a\128-\255]%a"
+
+-- ============================================
+-- Función   : primas_en_texto
+-- Propósito : Cambia la marca por la prima en un texto donde la letra, la
+--             marca y el paréntesis están juntos: «d’)»
+-- Parámetros: texto As string
+-- Retorna   : string, number — el texto y cuántas cambió
+-- ============================================
+local function primas_en_texto(texto)
+  local total, n = 0, 0
+  for _, par in ipairs(MARCAS_PRIMA) do
+    -- LA MARCA ES LITERAL: SE ESCAPAN LOS CARACTERES MÁGICOS DE LUA
+    texto, n = texto:gsub("(" .. LETRA_SUELTA .. ")" .. par[1]:gsub("%p", "%%%0") .. "%)",
+                          "%1" .. par[2] .. ")")
+    total = total + n
+  end
+  return texto, total
+end
+
+-- ============================================
+-- Función   : prima_al_comienzo
+-- Propósito : Para la marca que quedó en otro Str que la letra (la letra en
+--             cursiva y «’)» en redonda): si el Str empieza con la marca y
+--             el paréntesis y lo anterior termina en una letra suelta,
+--             devuelve el texto con la prima
+-- Parámetros: texto As string — el Str que empieza con la marca
+--             anterior As Inline — lo que está antes, o nil
+-- Retorna   : string o nil si no corresponde
+-- ============================================
+local function prima_al_comienzo(texto, anterior)
+  if not anterior or es_blanco(anterior) then return nil end
+  if not pandoc.utils.stringify(anterior):find(LETRA_SUELTA .. "$") then return nil end
+  for _, par in ipairs(MARCAS_PRIMA) do
+    if texto:sub(1, #par[1] + 1) == par[1] .. ")" then
+      return par[2] .. texto:sub(#par[1] + 1)
+    end
+  end
+  return nil
+end
+
+local pasada_primas = {
+  Inlines = function(inlines)
+    local cambio = false
+    local nuevo, n
+    for i, el in ipairs(inlines) do
+      if el.t == "Str" then
+        -- --- 1. LA LETRA, LA MARCA Y EL PARÉNTESIS EN EL MISMO Str ---
+        nuevo, n = primas_en_texto(el.text)
+        -- --- 2. LA MARCA AL COMIENZO, LA LETRA EN EL INLINE ANTERIOR ---
+        local otro = prima_al_comienzo(nuevo, inlines[i - 1])
+        if otro then nuevo, n = otro, n + 1 end
+        if n > 0 then
+          sumar("primas_de_rotulo", n)
+          inlines[i] = pandoc.Str(nuevo)
+          cambio = true
+        end
+      end
+    end
+    if not cambio then return nil end
+    return inlines
+  end,
+}
+
 -- ============================================
 -- Función   : normalizar_comillas
 -- Propósito : Lleva todas las comillas dobles de un bloque a « »
@@ -575,6 +660,7 @@ return {
   pasada_limpieza,
   pasada_tipografia,
   pasada_elision,
+  pasada_primas,
   pasada_comillas,
   pasada_saltos_estructura,
   pasada_saltos_parrafo,

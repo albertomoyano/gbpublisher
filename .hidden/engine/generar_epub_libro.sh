@@ -126,7 +126,7 @@ paso "verificando el entorno"
 
 [[ -d "$DIR_PROYECTO" ]] || morir "No existe el proyecto: $DIR_PROYECTO"
 
-requerir_comandos java xmllint zip identify convert sha256sum
+requerir_comandos java xmllint zip identify convert sha256sum perl
 
 [[ -f "$RUTA_SAXON" ]] || morir "Saxon-HE no está en $RUTA_SAXON"
 [[ -f "$XSL" ]]        || morir "No se encontró la hoja de salida EPUB: $XSL"
@@ -339,6 +339,36 @@ fi
 if (( problemas > 0 )); then
     morir "$problemas capítulo(s) con problemas: el EPUB no se genera"
 fi
+
+# --- 7b. MathML EN EL MANIFIESTO (SC-110) ---
+# EPUB 3 PIDE properties="mathml" EN CADA ÍTEM QUE TIENE MathML; SIN ÉL,
+# epubcheck LO MARCA. EL OPF LO ESCRIBE GAMBAS (m_GenerarEpubLibro) ANTES DE
+# GENERAR LOS CAPÍTULOS Y NO SABE CUÁLES LLEVAN FÓRMULAS: SE AGREGA ACÁ, CON
+# EL XHTML YA ESCRITO. UN ÍTEM QUE YA TENGA properties SUMA mathml A LA LISTA
+paso "declarando el MathML en content.opf"
+
+con_mathml=0
+for xhtml in "$DIR_OEBPS"/chapters/*.xhtml; do
+    [[ -f "$xhtml" ]] || continue
+    # LA DECLARACIÓN DEL ESPACIO MathML LA ESCRIBE formula-comun.xsl EN CADA <math>
+    grep -q 'xmlns="http://www.w3.org/1998/Math/MathML"' "$xhtml" || continue
+    HREF="chapters/$(basename "$xhtml")" perl -0pi -e '
+        s{(<item\b[^>]*\bhref="\Q$ENV{HREF}\E"[^>]*?)(\s*/>)}{
+            my ($i, $f) = ($1, $2);
+            $i =~ /\bproperties="/
+                ? ($i =~ s/\bproperties="([^"]*)"/properties="$1 mathml"/r) . $f
+                : "$i properties=\"mathml\"$f"
+        }e' "$OPF" || morir "No se pudo marcar el MathML de $(basename "$xhtml") en content.opf"
+    con_mathml=$((con_mathml + 1))
+done
+
+# LA CUENTA DEL OPF TIENE QUE COINCIDIR: UN ÍTEM QUE EL perl NO ENCONTRÓ
+# (UN CAPÍTULO QUE GAMBAS NO DECLARÓ) DEJARÍA EL EPUB INVÁLIDO
+marcados=$(grep -o 'properties="[^"]*mathml' "$OPF" | wc -l)
+if (( marcados != con_mathml )); then
+    morir "content.opf: $con_mathml capítulo(s) con fórmulas y $marcados ítem(s) marcados con mathml"
+fi
+(( con_mathml > 0 )) && ok "$con_mathml capítulo(s) con fórmulas" || ok "sin fórmulas"
 
 # --- 8. mimetype Y container.xml ---
 # NO SALEN DE LA BASE: SON FIJOS DEL FORMATO. mimetype SIN SALTO FINAL

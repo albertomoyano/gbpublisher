@@ -17,6 +17,7 @@
     f:titulo-tramos()     un título partido en sus cortes (SC-28)
     f:titulo-compuesto()  el título con \gbCorteTitulo (SC-28)
     f:titulo-plano()      el título en una línea (SC-28)
+    f:titulo-tramos-tex() los tramos en LaTeX, con la bastardilla (SC-111)
     f:babel-lang()    ISO 639-1 → nombre de idioma babel
     f:ruta-imagen()   normalización de rutas de imagen
     abortar-elemento  plantilla de corte ante vocabulario
@@ -184,9 +185,45 @@
   </xsl:function>
 
   <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:titulo-tramos-tex                                -->
+  <!-- PROPÓSITO: LOS TRAMOS DE UN TÍTULO EN LaTeX, ESCAPADOS, CON  -->
+  <!--            LA BASTARDILLA (<emphasis> DE DocBook, <italic>   -->
+  <!--            DE JATS) COMO \emph (SC-111)                      -->
+  <!-- PARÁMETROS: titulo As node()? — el elemento del título       -->
+  <!-- RETORNA  : xs:string* — UN TRAMO POR CORTE, COMO             -->
+  <!--            f:titulo-tramos, PERO LISTO PARA LaTeX            -->
+  <!-- NOTA     : LA BASTARDILLA SE MARCA CON DOS CARACTERES DE USO -->
+  <!--            PRIVADO (U+E000, U+E001) ANTES DE normalize-space -->
+  <!--            Y DE f:latex, QUE NO LOS TOCAN, Y DESPUÉS SE      -->
+  <!--            CAMBIAN POR \emph{ Y }. ASÍ LOS ESPACIOS SE      -->
+  <!--            NORMALIZAN SOBRE EL TÍTULO ENTERO, COMO ANTES, Y  -->
+  <!--            EL ESCAPE NO TOCA LA ORDEN. \emph Y NO \textit: -->
+  <!--            EN UNA APERTURA EN BASTARDILLA DA REDONDA         -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:titulo-tramos-tex" as="xs:string*">
+    <xsl:param name="titulo" as="node()?"/>
+    <xsl:for-each-group select="$titulo/node()"
+      group-starting-with="processing-instruction('gb-corte') | *:break">
+      <!-- SOLO TEXTO Y ELEMENTOS, COMO f:titulo-tramos; LA BASTARDILLA
+           ENTRE SUS DOS MARCAS -->
+      <xsl:variable name="marcado" select="normalize-space(string-join(
+        for $n in current-group()
+        return if ($n[self::*:emphasis[not(@role)] or self::*:italic])
+               then concat('&#xE000;', string($n), '&#xE001;')
+               else if ($n[self::text() or self::*]) then string($n)
+               else '', ''))"/>
+      <xsl:if test="translate($marcado, '&#xE000;&#xE001;', '') != ''">
+        <xsl:sequence select="replace(replace(f:latex($marcado),
+          '&#xE000;', '\\emph{'), '&#xE001;', '}')"/>
+      </xsl:if>
+    </xsl:for-each-group>
+  </xsl:function>
+
+  <!-- ============================================================ -->
   <!-- FUNCIÓN : f:titulo-compuesto                                 -->
   <!-- PROPÓSITO: EL TÍTULO PARA COMPONER: CADA TRAMO ESCAPADO Y    -->
-  <!--            UNIDOS CON \gbCorteTitulo (CONTRATO 6)            -->
+  <!--            UNIDOS CON \gbCorteTitulo (CONTRATO 6), CON SU    -->
+  <!--            BASTARDILLA (SC-111)                              -->
   <!-- PARÁMETROS: titulo As node()? — el elemento del título       -->
   <!-- RETORNA  : xs:string — LaTeX listo para el argumento de la   -->
   <!--            apertura; vacío si no hay título                  -->
@@ -198,8 +235,7 @@
   <!-- ============================================================ -->
   <xsl:function name="f:titulo-compuesto" as="xs:string">
     <xsl:param name="titulo" as="node()?"/>
-    <xsl:sequence select="string-join(
-      f:titulo-tramos($titulo) ! f:latex(.), '\gbCorteTitulo ')"/>
+    <xsl:sequence select="string-join(f:titulo-tramos-tex($titulo), '\gbCorteTitulo ')"/>
   </xsl:function>
 
   <!-- ============================================================ -->
@@ -207,11 +243,14 @@
   <!-- PROPÓSITO: EL TÍTULO EN UNA LÍNEA, ESCAPADO. ES EL QUE VA AL -->
   <!--            SUMARIO, AL FOLIO Y A LOS MARCADORES (SC-28)      -->
   <!-- PARÁMETROS: titulo As node()? — el elemento del título       -->
-  <!-- RETORNA  : xs:string — LaTeX sin \gbCorteTitulo              -->
+  <!-- RETORNA  : xs:string — LaTeX sin \gbCorteTitulo, CON LA      -->
+  <!--            BASTARDILLA: EL SUMARIO Y EL FOLIO LA COMPONEN, Y -->
+  <!--            hyperref LA QUITA EN LOS MARCADORES Y EN pdftitle -->
+  <!--            SIN AVISAR (GV-233, SC-111)                       -->
   <!-- ============================================================ -->
   <xsl:function name="f:titulo-plano" as="xs:string">
     <xsl:param name="titulo" as="node()?"/>
-    <xsl:sequence select="f:latex(string-join(f:titulo-tramos($titulo), ' '))"/>
+    <xsl:sequence select="string-join(f:titulo-tramos-tex($titulo), ' ')"/>
   </xsl:function>
 
   <!-- ============================================================ -->

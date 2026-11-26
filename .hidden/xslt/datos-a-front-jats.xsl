@@ -541,8 +541,13 @@
     </xsl:choose>
   </xsl:template>
 
-  <!-- UN TÍTULO DEL VOLCADO: TEXTO Y EL <break/> DEL CORTE (SC-28) -->
+  <!-- UN TÍTULO DEL VOLCADO: TEXTO, EL <break/> DEL CORTE (SC-28) Y LA
+       <italic> DE LA BASTARDILLA (SC-111), QUE ESCRIBE m_XML.TituloXML.
+       SIN ESTA PLANTILLA LA REGLA INCORPORADA COPIARÍA SOLO EL TEXTO -->
   <xsl:template match="break" mode="titulo"><break/></xsl:template>
+  <xsl:template match="italic" mode="titulo">
+    <italic><xsl:apply-templates mode="titulo"/></italic>
+  </xsl:template>
   <xsl:template match="text()" mode="titulo"><xsl:value-of select="."/></xsl:template>
 
 </xsl:stylesheet>

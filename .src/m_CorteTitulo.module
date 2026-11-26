@@ -3,7 +3,7 @@
 ' ==========================================================
 ' MÓDULO    : m_CorteTitulo
 ' PROPÓSITO : La regla única de partición de los títulos en el corte que
-'             escribe el editor (SC-28).
+'             escribe el editor (SC-28) y en la bastardilla (SC-111).
 '
 ' LA MARCA
 ' ----------------------------------------------------------
@@ -27,6 +27,24 @@
 '   En LaTeX el separador va pegado al tramo anterior. El espacio que lo
 '   sigue lo consume TeX al leer el nombre de la macro, así que donde
 '   \gbCorteTitulo vale espacio queda un solo espacio.
+'
+' LA BASTARDILLA (SC-111)
+' ----------------------------------------------------------
+'   El editor escribe *…* alrededor de lo que va en bastardilla: el título
+'   de una obra, un nombre científico. Es la marca del Markdown y, como el
+'   corte, vocabulario de gbpublisher que se traduce al salir: <emphasis>
+'   en DocBook, <italic> en JATS, \emph en LaTeX (que da el enroque en un
+'   título compuesto en bastardilla), nada en los destinos planos.
+'
+'   Segmentos parte un tramo en el asterisco. Como Tramos, no escapa: quien
+'   llama escapa cada segmento y envuelve los impares. Los segmentos pares
+'   van en redonda; los impares, en bastardilla.
+'
+'   Un asterisco sin pareja es texto: el último queda como «*». No se frena
+'   al guardar porque un título real puede llevar uno, y un descuido se ve
+'   en la salida. La bastardilla no cruza un corte: cada tramo se parte por
+'   separado, así que un *…* partido por \\ deja dos asteriscos sin
+'   pareja, que salen como texto.
 ' ==========================================================
 
 ' LA MARCA: DOS BARRAS INVERTIDAS. EN UN LITERAL DE GAMBAS LA BARRA SE
@@ -38,6 +56,11 @@ Public Const SEPARADOR_JATS As String = " <break/> "
 Public Const SEPARADOR_DOCBOOK As String = " <?gb-corte?> "
 Public Const SEPARADOR_TEX As String = "\\gbCorteTitulo "
 Public Const SEPARADOR_PLANO As String = " "
+
+' LA MARCA DE BASTARDILLA Y SU ELEMENTO EN CADA VOCABULARIO (SC-111)
+Public Const MARCA_BASTARDILLA As String = "*"
+Public Const ETIQUETA_JATS As String = "italic"
+Public Const ETIQUETA_DOCBOOK As String = "emphasis"
 
 ' ============================================
 ' Función   : Tramos
@@ -83,13 +106,62 @@ End
 
 ' ============================================
 ' Función   : Plano
-' Propósito : El título en una línea: cada marca pasa a ser un espacio. Es
-'             la forma de todo destino que no corta (SC-28).
+' Propósito : El título en una línea: cada corte pasa a ser un espacio y la
+'             bastardilla pierde sus asteriscos. Es la forma de todo destino
+'             que no corta ni compone (SC-28, SC-111): OPF, JSON de gbWeb,
+'             ficha, metadatos del PDF, árbol del editor
 ' Parámetros: sTexto As String — el título tal como está en la base
 ' Retorna   : String — el título sin marcas, SIN ESCAPAR
+' Nota      : EL ASTERISCO SIN PAREJA QUEDA (Segmentos): ES TEXTO
 ' ============================================
 Public Function Plano(sTexto As String) As String
 
-  Return Tramos(sTexto).Join(SEPARADOR_PLANO)
+  Dim aTramos As String[]
+  Dim i As Integer
+
+  ' --- 1. PARTICIÓN EN EL CORTE ---
+  aTramos = Tramos(sTexto)
+
+  ' --- 2. CADA TRAMO SIN LAS MARCAS DE BASTARDILLA ---
+  For i = 0 To aTramos.Max
+    aTramos[i] = Segmentos(aTramos[i]).Join("")
+  Next
+
+  ' --- 3. UNIÓN CON EL ESPACIO ---
+  Return aTramos.Join(SEPARADOR_PLANO)
+
+End
+
+' ============================================
+' Función   : Segmentos
+' Propósito : Parte un tramo del título en la marca de bastardilla (SC-111)
+' Parámetros: sTramo As String — un tramo de Tramos, o un título sin corte
+' Retorna   : String[] — los segmentos: los de índice par en redonda, los de
+'             índice impar en bastardilla. Puede haber segmentos vacíos
+'             («*X*» da «», «X», «»). Sin marca, un solo segmento
+' Nota      : Split CON UN CARÁCTER CONSERVA LOS VACÍOS Y CON TEXTO VACÍO DA
+'             CERO ELEMENTOS (MEDIDO, GV-233). UN NÚMERO PAR DE SEGMENTOS ES
+'             UN ASTERISCO SIN PAREJA: EL ÚLTIMO VUELVE A SER TEXTO, PEGADO
+'             A SU SEGMENTO. ES ASCII: NO CORTA UN CARÁCTER MULTIBYTE
+'             (RC-GM-12)
+' ============================================
+Public Function Segmentos(sTramo As String) As String[]
+
+  Dim aSegmentos As String[]
+
+  ' --- 1. TEXTO VACÍO: UN SEGMENTO VACÍO, PARA QUE QUIEN LLAMA NO LO DISTINGA ---
+  If sTramo = "" Then Return [""]
+
+  ' --- 2. PARTICIÓN ---
+  aSegmentos = Split(sTramo, MARCA_BASTARDILLA)
+
+  ' --- 3. EL ASTERISCO SIN PAREJA VUELVE A SER TEXTO ---
+  If aSegmentos.Count Mod 2 = 0 Then
+    aSegmentos[aSegmentos.Max - 1] &= MARCA_BASTARDILLA & aSegmentos[aSegmentos.Max]
+    aSegmentos.Remove(aSegmentos.Max)
+  Endif
+
+  ' --- 4. RETORNO ---
+  Return aSegmentos
 
 End

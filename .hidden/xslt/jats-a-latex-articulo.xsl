@@ -959,4 +959,80 @@
     </xsl:if>
   </xsl:template>
 
+  <!-- ============================================================ -->
+  <!-- FÓRMULAS (SC-110, LOTE 2b)                                   -->
+  <!-- EL CANÓNICO TRAE CADA FÓRMULA CON SUS DOS FORMAS EN            -->
+  <!-- <alternatives> (PANDOC, GV-229). EL PDF COMPONE DESDE          -->
+  <!-- <tex-math>, TAL CUAL: LOS CORTES Y LAS ALINEACIONES DEL        -->
+  <!-- EDITOR. EL MathML ES PARA EL HTML Y EL EPUB. REEMPLAZAN A LAS  -->
+  <!-- DE LA HOJA VIEJA, QUE ESCRIBÍAN UN TEXTO PROVISORIO JUNTO AL   -->
+  <!-- TeX EN LUGAR DEL MathML. LAS MISMAS REGLAS QUE EL LIBRO        -->
+  <!-- (docbook-to-latex.xsl)                                        -->
+  <!-- ============================================================ -->
+
+  <!-- ============================================
+       Función   : gbr:tex-de-formula
+       Propósito : El TeX de una fórmula, sin los blancos de los extremos.
+                   Sin <tex-math> frena: no se convierte el MathML a TeX
+       Parámetros: e As element() — inline-formula o disp-formula
+       Retorna   : xs:string
+       ============================================ -->
+  <xsl:function name="gbr:tex-de-formula" as="xs:string">
+    <xsl:param name="e" as="element()"/>
+    <xsl:variable name="tex" select="string(($e/alternatives/tex-math, $e/tex-math)[1])"/>
+    <xsl:if test="normalize-space($tex) = ''">
+      <xsl:message terminate="yes">
+        <xsl:text>&#10;[jats-a-latex-articulo] FÓRMULA SIN SU TeX&#10;</xsl:text>
+        <xsl:text>  Ruta: </xsl:text>
+        <xsl:value-of select="string-join(for $n in $e/ancestor-or-self::* return name($n), '/')"/>
+        <xsl:text>&#10;&#10;  El canónico no tiene &lt;tex-math&gt;: regenerá el canónico del artículo (SC-110).&#10;</xsl:text>
+      </xsl:message>
+    </xsl:if>
+    <xsl:sequence select="replace(replace($tex, '^\s+', ''), '\s+$', '')"/>
+  </xsl:function>
+
+  <!-- EN LÍNEA. EL TeX NO PASA POR f:latex: ES MATEMÁTICA, NO TEXTO -->
+  <xsl:template match="inline-formula">
+    <xsl:text>$</xsl:text>
+    <xsl:value-of select="gbr:tex-de-formula(.)"/>
+    <xsl:text>$</xsl:text>
+  </xsl:template>
+
+  <!-- EN BLOQUE, ADENTRO DEL PÁRRAFO QUE LA INTRODUCE, SIN LÍNEA EN    -->
+  <!-- BLANCO: EL TEXTO QUE SIGUE EN EL MISMO <p> CONTINÚA SIN SANGRÍA. -->
+  <!-- SIN <label>: \[ … \], O align* SI ES UN SISTEMA (UN SOLO aligned -->
+  <!-- QUE OCUPA TODA LA FÓRMULA), QUE SE PARTE ENTRE PÁGINAS; EL       -->
+  <!-- RENGLÓN QUE EMPIEZA CON &amp;\qquad QUEDA PEGADO AL ANTERIOR (\\*). -->
+  <!-- CON <label> (LA NUMERADA, formula-jats.lua): EL NÚMERO DEL        -->
+  <!-- CANÓNICO CON \tag*, EL MISMO QUE MUESTRAN EL HTML, EL EPUB Y LOS  -->
+  <!-- SABORES; UN SISTEMA NUMERADO NO SE PARTE                          -->
+  <xsl:template match="disp-formula">
+    <xsl:variable name="tex" select="gbr:tex-de-formula(.)"/>
+    <xsl:variable name="inicio" select="'\begin{aligned}'"/>
+    <xsl:variable name="fin" select="'\end{aligned}'"/>
+    <xsl:choose>
+      <xsl:when test="label">
+        <xsl:text>&#10;\begin{equation*}&#10;</xsl:text>
+        <xsl:value-of select="$tex"/>
+        <xsl:text>&#10;\tag*{</xsl:text>
+        <xsl:value-of select="f:latex(normalize-space(label))"/>
+        <xsl:text>}&#10;\end{equation*}&#10;</xsl:text>
+      </xsl:when>
+      <xsl:when test="starts-with($tex, $inicio) and ends-with($tex, $fin)
+                      and count(tokenize($tex, '\\begin\{aligned\}')) = 2">
+        <xsl:variable name="cuerpo" select="replace(replace(substring($tex, string-length($inicio) + 1,
+                              string-length($tex) - string-length($inicio) - string-length($fin)),
+                              '^\s+', ''), '\s+$', '')"/>
+        <xsl:text>&#10;\begin{align*}&#10;</xsl:text>
+        <xsl:value-of select="replace($cuerpo, '\\\\(\s*&amp;\\qquad)', '\\\\*$1')"/>
+        <xsl:text>&#10;\end{align*}&#10;</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>&#10;\[&#10;</xsl:text>
+        <xsl:value-of select="$tex"/>
+        <xsl:text>&#10;\]&#10;</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
 </xsl:stylesheet>

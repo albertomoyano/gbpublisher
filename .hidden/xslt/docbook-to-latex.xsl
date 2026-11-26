@@ -861,6 +861,15 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
+  <!-- A UNA FÓRMULA NUMERADA: \eqref, EL NÚMERO ENTRE PARÉNTESIS,       -->
+  <!-- «(9.1)» (SC-110, DECISIÓN DE ALBERTO). LOS id eq- NO SE PREFIJAN   -->
+  <!-- CON EL DEL CAPÍTULO (db:es-id-global)                             -->
+  <xsl:template match="xref[starts-with(@linkend, 'eq-')]" priority="1">
+    <xsl:text>\eqref{</xsl:text>
+    <xsl:value-of select="@linkend"/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
   <!-- ============================================================ -->
   <!-- CITAS BIBLIOGRÁFICAS                                         -->
   <!-- ============================================================ -->
@@ -1522,6 +1531,86 @@
       <xsl:with-param name="termino" select="$inicio"/>
     </xsl:call-template>
     <xsl:text>|)hyperpage}</xsl:text>
+  </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- FÓRMULAS (SC-110)                                            -->
+  <!-- EL CANÓNICO TRAE EL TeX DEL AUTOR EN <alt role="tex"> Y EL     -->
+  <!-- MathML DESPUÉS (filters/formula.lua). EL PDF COMPONE DESDE EL  -->
+  <!-- alt, TAL CUAL: SON LOS CORTES Y LAS ALINEACIONES QUE PUSO EL   -->
+  <!-- EDITOR (aligned, \\). EL MathML ES PARA EL HTML Y EL EPUB.     -->
+  <!-- ============================================================ -->
+
+  <!-- EL TeX DE LA ECUACIÓN, SIN LOS BLANCOS DE LOS EXTREMOS. SIN alt  -->
+  <!-- FRENA: EL CANÓNICO ES ANTERIOR A formula.lua Y HAY QUE           -->
+  <!-- REGENERARLO. NO SE CONVIERTE EL MathML A TeX (SC-110)            -->
+  <xsl:function name="f:tex-de-formula" as="xs:string">
+    <xsl:param name="e" as="element()"/>
+    <xsl:variable name="tex" select="string($e/alt[@role = 'tex'][1])"/>
+    <xsl:if test="normalize-space($tex) = ''">
+      <xsl:message terminate="yes">
+        <xsl:text>&#10;[docbook-to-latex] FÓRMULA SIN SU TeX&#10;</xsl:text>
+        <xsl:text>  Ruta: </xsl:text>
+        <xsl:value-of select="string-join(for $n in $e/ancestor-or-self::* return name($n), '/')"/>
+        <xsl:text>&#10;&#10;  El canónico no tiene el &lt;alt role="tex"&gt; que escribe</xsl:text>
+        <xsl:text>&#10;  filters/formula.lua: regenerá el canónico del capítulo (SC-110).&#10;</xsl:text>
+      </xsl:message>
+    </xsl:if>
+    <xsl:sequence select="f:recortar($tex)"/>
+  </xsl:function>
+
+  <!-- EN LÍNEA. EL TeX NO PASA POR f:latex: ES MATEMÁTICA, NO TEXTO -->
+  <xsl:template match="inlineequation">
+    <xsl:text>$</xsl:text>
+    <xsl:value-of select="f:tex-de-formula(.)"/>
+    <xsl:text>$</xsl:text>
+  </xsl:template>
+
+  <!-- EN BLOQUE, ADENTRO DEL PÁRRAFO QUE LA INTRODUCE: \[ … \] SIN     -->
+  <!-- LÍNEA EN BLANCO ANTES NI DESPUÉS. EL TEXTO QUE SIGUE EN EL       -->
+  <!-- MISMO <para> («donde», «siendo») CONTINÚA EL PÁRRAFO SIN SANGRÍA -->
+  <!-- UN SISTEMA (UN SOLO aligned QUE OCUPA TODA LA FÓRMULA) SALE COMO  -->
+  <!-- align*: aligned ES UNA CAJA Y NO SE PARTE ENTRE PÁGINAS, Y UN     -->
+  <!-- SISTEMA MÁS ALTO QUE LA CAJA DE TEXTO INVADÍA EL PIE (MEDIDO CON   -->
+  <!-- EL CAPÍTULO 10 DE INIGO, 26/11/2026). align* TIENE LAS MISMAS      -->
+  <!-- COLUMNAS Y SE PARTE CON \allowdisplaybreaks (CONTRATO 24). CON DOS -->
+  <!-- aligned O CON TEXTO ALREDEDOR DEL aligned, QUEDA \[ … \]          -->
+  <xsl:template match="informalequation">
+    <xsl:variable name="tex" select="f:tex-de-formula(.)"/>
+    <xsl:variable name="inicio" select="'\begin{aligned}'"/>
+    <xsl:variable name="fin" select="'\end{aligned}'"/>
+    <xsl:choose>
+      <xsl:when test="starts-with($tex, $inicio) and ends-with($tex, $fin)
+                      and count(tokenize($tex, '\\begin\{aligned\}')) = 2">
+        <xsl:variable name="cuerpo" select="f:recortar(substring($tex, string-length($inicio) + 1,
+                              string-length($tex) - string-length($inicio) - string-length($fin)))"/>
+        <xsl:text>&#10;\begin{align*}&#10;</xsl:text>
+        <!-- UN RENGLÓN QUE EMPIEZA CON &amp;\qquad ES LA CONTINUACIÓN DE LA   -->
+        <!-- ECUACIÓN ANTERIOR (SC-110): EL \\ QUE LOS SEPARA PASA A \\*,    -->
+        <!-- QUE NO DEJA CORTAR LA PÁGINA AHÍ. EN EL .md NO SE PUEDE ESCRIBIR -->
+        <!-- \\*: texmath LO LEE COMO \\ Y UN ASTERISCO SUELTO (GV-229)       -->
+        <xsl:value-of select="replace($cuerpo, '\\\\(\s*&amp;\\qquad)', '\\\\*$1')"/>
+        <xsl:text>&#10;\end{align*}&#10;</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>&#10;\[&#10;</xsl:text>
+        <xsl:value-of select="$tex"/>
+        <xsl:text>&#10;\]&#10;</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- NUMERADA ([$$…$$]{#eq-nombre}, SC-110): equation CON SU \label, -->
+  <!-- ADENTRO DEL PÁRRAFO COMO LA OTRA. EL NÚMERO ES \theequation DEL  -->
+  <!-- CONTRATO 9 (9.1 EN UN CAPÍTULO, 1 EN UNA PIEZA SIN NÚMERO). UN   -->
+  <!-- SISTEMA NUMERADO (aligned) LLEVA UN SOLO NÚMERO Y NO SE PARTE    -->
+  <!-- ENTRE PÁGINAS: equation ES UNA CAJA                              -->
+  <xsl:template match="equation">
+    <xsl:text>&#10;\begin{equation}\label{</xsl:text>
+    <xsl:value-of select="@xml:id"/>
+    <xsl:text>}&#10;</xsl:text>
+    <xsl:value-of select="f:tex-de-formula(.)"/>
+    <xsl:text>&#10;\end{equation}&#10;</xsl:text>
   </xsl:template>
 
   <!-- ============================================================ -->
