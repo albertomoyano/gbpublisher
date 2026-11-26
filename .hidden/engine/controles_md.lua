@@ -875,6 +875,12 @@ local function revisar_formulas_inlines(aInlines, bloque)
           "la fórmula «" .. texto_formula(el) .. "» tiene ’ (comilla): la prima es ' y va " ..
           "antes del superíndice, g'^{c}_{x} (GV-228)")
       end
+      -- --- 1b. LA DOBLE PRIMA CON COMILLAS: " O ” ADENTRO DE LA FÓRMULA ---
+      if el.text:find('"', 1, true) or el.text:find("\u{201D}", 1, true) then
+        registrar("formula_doble_prima",
+          "la fórmula «" .. texto_formula(el) .. "» tiene una comilla doble: la doble " ..
+          "prima son dos apóstrofos, d'' (no d\" ni d”), y va antes del superíndice")
+      end
       -- --- 2. UN SISTEMA ARMADO CON matrix ---
       if el.text:find("\\begin{matrix}", 1, true) then
         registrar("matriz_como_sistema",
