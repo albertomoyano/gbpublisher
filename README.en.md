@@ -1,5 +1,8 @@
 [Español](README.md) | **English**
 
+> [!IMPORTANT]
+> If you are considering installing gbpublisher on your computer, first read **[LEER-INSTALADOR.md](LEER-INSTALADOR.md)** (in Spanish).
+
 **gbpublisher** is an editorial production system for academic books and scholarly journals. It takes the work from the manuscript to the final outputs —PDF, EPUB, HTML and the XML files required by indexing services— from a single canonical XML source: DocBook 5 for books and JATS 1.4 for journals.
 
 It is a desktop application for Linux with a client-server architecture. The editorial team works on a shared MySQL database, even when each person works from home. It is meant for the people who produce the book or the journal (editing, proofreading, layout and coordination); it is not designed for authors.
@@ -7,6 +10,16 @@ It is a desktop application for Linux with a client-server architecture. The edi
 Texts are written in Markdown and normalized with Pandoc. Outputs are derived from the canonical XML through XSLT and typeset with LuaLaTeX. The PDF is the reference; the EPUB and HTML faithfully reproduce its structure. The critical tools in the process (Pandoc, Saxon-HE, epubcheck, veraPDF, packtools) are installed in fixed versions, so a title can be regenerated identically years later.
 
 Each publisher installs its own copy, owns its data and manages its own credentials: there is no central server and no intermediaries. Only open standards are used.
+
+---
+
+## Installation
+
+**gbpublisher is installed with its installer, `instalador.sh`.** It is the only file you need to download: the installer downloads and installs everything else, including the application itself.
+
+Before running it, read **[LEER-INSTALADOR.md](LEER-INSTALADOR.md)** (in Spanish): it explains what you need, how to run it, what it does on your computer and what to do if something fails. The installer asks whether you have read it before it starts.
+
+Each version publishes its own installer on the [releases](https://github.com/albertomoyano/gbpublisher/releases) page, with the line to paste into a terminal.
 
 ---
 
@@ -91,7 +104,7 @@ See [LICENSE.md](LICENSE.md) for the full terms (in Spanish). This summary is fo
 ## Project information
 
 - Repository: [https://github.com/albertomoyano/gbpublisher](https://github.com/albertomoyano/gbpublisher)
-- Installation: [LEEME.md](LEEME.md) (in Spanish)
+- Installation: [LEER-INSTALADOR.md](LEER-INSTALADOR.md) (in Spanish)
 - Database: [BBDD_LEEME.md](BBDD_LEEME.md) (in Spanish)
 - Architecture: [ARCHITECTURE.md](ARCHITECTURE.md) (in Spanish)
 - Licensing inquiries: [contacto@estudio2a.ar](mailto:contacto@estudio2a.ar)

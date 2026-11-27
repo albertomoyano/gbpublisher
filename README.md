@@ -1,5 +1,8 @@
 **Español** | [English](README.en.md)
 
+> [!IMPORTANT]
+> Si usted considera instalar gbpublisher en su equipo, primero debe leer **[LEER-INSTALADOR.md](LEER-INSTALADOR.md)**.
+
 **gbpublisher** es un sistema de producción editorial para libros académicos y revistas científicas. Lleva el trabajo desde el manuscrito hasta las salidas finales —PDF, EPUB, HTML y los XML que piden los indexadores— a partir de una única fuente XML canónica: DocBook 5 para libros y JATS 1.4 para revistas.
 
 Es una aplicación de escritorio para Linux con arquitectura cliente-servidor. El equipo editorial trabaja sobre una base MySQL compartida, aunque cada persona esté en su casa. La usan quienes producen el libro o la revista (edición, corrección, maquetación y coordinación), no está pensada para autores.
@@ -7,6 +10,16 @@ Es una aplicación de escritorio para Linux con arquitectura cliente-servidor. E
 Los textos se escriben en Markdown y se normalizan con Pandoc. Las salidas salen del XML canónico por XSLT y se componen con LuaLaTeX. El PDF es la referencia, el EPUB y el HTML reproducen fielmente su estructura. Las herramientas críticas del proceso (Pandoc, Saxon-HE, epubcheck, veraPDF, packtools) se instalan en versiones fijas, así que un título puede regenerarse idéntico años después.
 
 Cada editorial instala su propia copia, es dueña de sus datos y maneja sus propias credenciales: no hay servidor central ni intermediarios. Solo se usan estándares abiertos.
+
+---
+
+## Instalación
+
+**gbpublisher se instala con su instalador, `instalador.sh`.** Es lo único que hay que descargar: el instalador descarga e instala todo lo demás, incluida la propia aplicación.
+
+Antes de ejecutarlo, lea **[LEER-INSTALADOR.md](LEER-INSTALADOR.md)**: explica qué necesita, cómo se ejecuta, qué hace en su computadora y qué hacer si algo falla. El instalador pregunta si lo leyó antes de empezar.
+
+Cada versión publica su propio instalador en la página de [versiones](https://github.com/albertomoyano/gbpublisher/releases), con la línea para copiar en una terminal.
 
 ---
 
@@ -89,7 +102,7 @@ Véase [LICENSE.md](LICENSE.md) para los términos completos.
 ## Información del proyecto
 
 - Repositorio: [https://github.com/albertomoyano/gbpublisher](https://github.com/albertomoyano/gbpublisher)
-- Instalación: [LEEME.md](LEEME.md)
+- Instalación: [LEER-INSTALADOR.md](LEER-INSTALADOR.md)
 - Base de datos: [BBDD_LEEME.md](BBDD_LEEME.md)
 - Arquitectura: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Consultas sobre licenciamiento: [contacto@estudio2a.ar](mailto:contacto@estudio2a.ar)

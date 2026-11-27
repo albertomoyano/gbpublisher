@@ -6229,15 +6229,58 @@ Sale en diciembre de 2026, sobre Ubuntu 26.04.
 
 TeX Live sigue sin congelarse (SC-95): según la experiencia de Alberto, no rompe hacia atrás.
 
-**Relaciones:** vinculo:SC-95,vinculo:SC-106,vinculo:SC-22,vinculo:GV-206,vinculo:GV-209,vinculo:SC-81
+LA PRESENTACIÓN (decisiones de Alberto, 27/11/2026)
+
+- **Español neutro, con usted** («ejecute», «cierre»), en el instalador y en `LEER-INSTALADOR.md`. Los scripts que el instalador llama (`configurar-conexion.sh`, los de esquema) pasan a neutro cuando él los llame, para que no haya dos voces en la misma pantalla.
+- **La pantalla de inicio:**
+  1. la bienvenida;
+  2. en mayúsculas, «ANTES DE EMPEZAR, CIERRE GBPUBLISHER SI ESTÁ ABIERTO»;
+  3. la dirección de `LEER-INSTALADOR.md` de la misma etiqueta;
+  4. «¿Lo leyó? [s/n]».
+
+  El control previo también detecta gbpublisher abierto y frena con el mismo pedido. No lo cierra solo: puede haber trabajo sin guardar.
+- **Las respuestas:** `s/n`, aceptando s, si, sí, S y SI. No hay `SI` obligatorio: en el instalador nada se pierde (una actualización siempre hace respaldo).
+- **Tres fases para una sola contraseña:** `pkexec` autoriza un solo comando.
+  1. Usuario: controles, diagnóstico, resumen, confirmación y descarga a `~/gbpublisher-instalacion/` con la huella verificada. Retoma si se corta, y no deja archivos de root en la carpeta personal.
+  2. Root, en una sola ventana de pkexec: el repositorio de Gambas, apt y el `.deb`, `/opt`, MySQL, la base y la clave de `app_user`.
+  3. Usuario: `conexion.conf`, la verificación como usuario común y el cierre.
+- **El resumen dice lo que va a pasar en esa máquina** (instalación nueva, actualización o verificación) y no un texto general. Incluye el peso de TeX Live y el aviso de no cerrar la ventana.
+- **El avance, idea de Alberto:**
+  - Cada paso es una línea numerada, `[3/8] Nombre del paso`.
+  - Mientras corre, lleva el tiempo transcurrido y una barra de `=` que va y viene de un borde al otro de la terminal. No mide porcentaje: solo muestra que el equipo trabaja.
+  - Al terminar queda `ok`.
+  - Lo que escribe el paso (apt, MySQL) va al registro, no a la pantalla.
+  - El ancho de la barra se toma al empezar cada paso.
+  - Ctrl+C o cerrar la ventana detiene también el trabajo de fondo. La próxima corrida retoma, y si el corte fue durante apt, primero repara (`dpkg --configure -a`).
+  - Sin terminal no hay animación, solo el `ok`.
+- **La misma versión ya instalada:** ofrece «verificar y reparar» (controles, integridad y conexión, y arregla lo que falte). «Vuelva a ejecutar el instalador» es el primer paso del soporte.
+- **Actualización:** corre solo `limpiar-gbpublisher-local.sh --aplicar`, con su respaldo, para sacar de `~/.gbpublisher` las copias viejas de recursos (modelo de recursos leídos del sistema).
+- **Locale:** si no es UTF-8, frena y remite a `LEER-INSTALADOR.md`. No toca la configuración regional del sistema (GV-234).
+- **Registro:** un archivo por corrida, `~/gbpublisher-instalacion-AAAAMMDD-HHMM.log`.
+- **Cierre:**
+  - qué quedó instalado;
+  - cómo abrir gbpublisher;
+  - el registro;
+  - en mayúsculas, el primer acceso del administrador (`admin`/`admin123`), con el aviso de que esos datos son públicos y hay que cambiarlos al entrar. Las credenciales quedan como están (decisión de Alberto).
+  - «Pulse Enter para cerrar».
+
+  Ante un error: qué falló, el registro y el enlace al formulario de issues ya cargado.
+
+`LEER-INSTALADOR.md` ESCRITO (27/11/2026), en la raíz del repositorio.
+- Lleva dos marcas que reemplaza la generación de cada release: `@VERSION@` y `@ENLACE_ARTICULO_GITHUB@`.
+- Para pegar la línea en la terminal indica el botón derecho → Pegar. En la gnome-terminal de Alberto, Ctrl+Shift+V no pega.
+- No menciona MariaDB (decisión de Alberto: gbpublisher es MySQL). El control del instalador que frena si la encuentra se mantiene (GV-209), y su propio mensaje lo explica solo en ese caso.
+
+EL README. `README.md` y `README.en.md` abren, después del selector de idioma, con una alerta de GitHub `> [!IMPORTANT]` que pide leer `LEER-INSTALADOR.md` antes de instalar. Se eligió que esté arriba porque la mayoría llega al repositorio sabiendo que va a instalar. GitHub no permite un fondo de color en un README (quita los estilos). La alerta da un recuadro con borde de color e ícono, y su título lo pone GitHub en inglés. Se descartó una imagen SVG con fondo: el texto no se selecciona y hay que hacer una por idioma. Los dos README suman además una sección «Instalación» y apuntan a `LEER-INSTALADOR.md` en lugar de `LEEME.md`.
+
+**Relaciones:** vinculo:SC-95,vinculo:SC-106,vinculo:SC-22,vinculo:GV-206,vinculo:GV-209,vinculo:SC-81,vinculo:GV-234
 
 **PENDIENTE:** Implementar, en este orden:
-1. La plantilla del instalador y su generador (versión y huella del .deb).
+1. La plantilla del instalador y su generador (versión y huella del .deb; también reemplaza @VERSION@ y @ENLACE_ARTICULO_GITHUB@ en LEER-INSTALADOR.md y frena si queda alguna).
 2. engine/integridad.sh sin proyecto abierto.
-3. El modo no interactivo de los scripts de esquema.
-4. LEER-INSTALADOR.md y la sección del README.
-5. El formulario de issues.
-6. El artículo del blog sobre la cuenta de GitHub.
+3. El modo no interactivo de los scripts de esquema, y su paso a español neutro junto con configurar-conexion.sh.
+4. El formulario de issues.
+5. El artículo del blog sobre la cuenta de GitHub (su enlace va en LEER-INSTALADOR.md).
 
 Después: la tanda de Mint 23 y el modo compartido (Eduvim).
 
@@ -6502,9 +6545,9 @@ EL LOTE DE RETIRO (27/11/2026, decisiones de Alberto)
 
 PROBADO (27/11/2026). Alberto aplicó el lote: compila sin `gb.form.htmlview`, y `FAvisoLegal` y `FDiccionario` funcionan con `TextEdit`. El texto legal aparecía desde el final; se corrigió con `Pos = 0` después de `RichText` y `ScrollY = 0` en `Form_Show` (GV-64).
 
-**Relaciones:** vinculo:SC-24,vinculo:SC-11,vinculo:SC-22,vinculo:SC-50,vinculo:GV-64,vinculo:GV-108,vinculo:GV-43,vinculo:GV-17,vinculo:SC-22
+LA 2.5.0, APLICADA (27/11/2026). Con el `.deb` nuevo instalado, Alberto corrió `actualizar-esquema-2.5.0.sh`: `manual_ayudas` ya no está en la base. La ayuda vieja quedó retirada del código y de la base; la ayuda es el libro `l-AYUDA`.
 
-**PENDIENTE:** Aplicar la 2.5.0 después de instalar el .deb nuevo, en todos los puestos.
+**Relaciones:** vinculo:SC-24,vinculo:SC-11,vinculo:SC-22,vinculo:SC-50,vinculo:GV-64,vinculo:GV-108,vinculo:GV-43,vinculo:GV-17,vinculo:SC-22,vinculo:GV-234
 
 ---
 
@@ -11777,6 +11820,68 @@ Los vacíos de los extremos y del medio quedan (lo mismo que GV-185 con un separ
 hyperref (TeX Live 2023, LuaLaTeX). `\hypersetup{pdftitle={Sobre \emph{Money and Totality}}}` y `\chapter[… \emph{Money and Totality}]{…}` con `bookmarks`: el título del PDF y el marcador salen «Sobre Money and Totality», sin el `\emph`, y hyperref no da «Token not allowed» ni otro aviso. El sumario compone la cursiva. Medido también con los cuatro preámbulos del libro Inigo y `\gbCapitulo` (pypdf lee el marcador plano).
 
 **Relaciones:** apoya:SC-111,vinculo:GV-185
+
+### GV-234 — System.Language: al leerla da LC_ALL, si no LANG, si no «C»; al asignarla cambia el locale de todo el proceso y de sus hijos, y con un locale no instalado cae a «C» sin dejar de nombrar el pedido
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.2 / Linux Mint, es_AR.UTF-8 (banco gbBanco322, 27/11/2026); código de gbx_local.c 3.22.0; contraste con Gambas 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido el 27/11/2026 en Mint con Gambas 3.22.2 (banco gbBanco322, desde una terminal), y leído en el código del intérprete 3.22.0 (`main/gbx/gbx_local.c`: `LOCAL_get_lang`, `LOCAL_set_lang`, `LOCAL_init`). Contraste: la misma prueba con Gambas 3.19 en el contenedor.
+
+AL LEERLA
+
+Devuelve `LC_ALL` si no está vacía; si no, `LANG`; si tampoco, `"C"`. La wiki dice que el último recurso es `en_US`: está desactualizada (medido con el entorno vacío en 3.19, y así está en el código de 3.22.0). No mira `LANGUAGE` ni las variables por categoría (`LC_NUMERIC`, `LC_TIME`).
+
+AL ARRANCAR (3.22.2)
+
+El intérprete fija `LANG` y REEMPLAZA `LANGUAGE` con el mismo valor: una sesión con `LANGUAGE=es_AR:es` llega al programa, y a todos sus procesos hijos, con `LANGUAGE=es_AR.UTF-8`. No escribe `LC_ALL`, y llama a `setlocale(LC_ALL, "")`: las categorías siguen cada una su variable.
+
+    entorno: LANG=en_US.UTF-8  LC_NUMERIC=es_AR.UTF-8  (sin LC_ALL)
+    System.Language      en_US.UTF-8
+    Str(1.5)             1,5            ← LC_NUMERIC
+    Val("1,5")           1,5
+    Format(fecha)        Friday 27 November 2026   ← LC_TIME, que sigue a LANG
+    hijo (locale)        LANG=en_US.UTF-8  LC_NUMERIC=es_AR.UTF-8  LC_ALL=
+
+O sea: `System.Language` puede nombrar un locale mientras los números siguen otro. No dice cómo se formatea nada.
+
+EN 3.19 ERA DISTINTO. El arranque ponía `LC_ALL` igual a `LANG` y no tocaba `LANGUAGE`. Con el mismo entorno, `Str(1.5)` daba «1.5»: el `LC_NUMERIC` de la persona se perdía, también para los hijos.
+
+AL ASIGNARLA
+
+`System.Language = "C.UTF-8"` escribe `LC_ALL`, `LANG` y `LANGUAGE` en el entorno, llama a `setlocale`, recarga las traducciones de los componentes y avisa a Qt. Todo el proceso cambia en el acto, y los programas que se lancen después con `Shell` o `Exec` (Pandoc, Saxon, LuaLaTeX, hunspell, los scripts de `engine/`) lo heredan:
+
+    es_AR.UTF-8 → C.UTF-8
+    Str(1.5)             1,5 → 1.5
+    Val("1,5")           1,5 → Null
+    Format(fecha)        viernes 27 noviembre 2026 → Friday 27 November 2026
+    String.LCase(ÁÑ)     árbol ñandú → árbol ñandú   (C.UTF-8 sigue siendo UTF-8)
+    hijo (locale)        todo en C.UTF-8
+
+Volver a asignar el valor original deja todo como al principio.
+
+UN LOCALE QUE NO ESTÁ INSTALADO
+
+`System.Language = "xx_YY.UTF-8"` no levanta error: el intérprete escribe en stderr «cannot switch to language 'xx_YY.UTF-8' … Did you install the corresponding locale packages?» y cae a `"C"`, sin UTF-8. Pero la propiedad sigue devolviendo `xx_YY.UTF-8`, y el entorno de los hijos también:
+
+    System.Language      xx_YY.UTF-8      ← lo pedido, no lo activo
+    System.Charset       ANSI_X3.4-1968
+    Str(1.5)             1.5
+    Format(fecha)        Friday 27 November 2026
+    String.LCase(ÁÑ)     Árbol ÑandÚ      ← ya no convierte (GV-03, GV-150)
+
+Un `Try` no lo detecta. La propiedad puede afirmar un locale que no está activo.
+
+CONSECUENCIAS PARA EL PROYECTO
+
+- `System.Language` no sirve para saber cómo se formatean los números ni para elegir el idioma de lo que lee la persona: es el locale del proceso, sin `LANGUAGE` ni las categorías. Por eso la ayuda no se deduce de ella (SC-112).
+- Fijar el locale al arrancar con `System.Language` no reemplaza escribir el código independiente del locale (GV-03, GV-96): cambia la interfaz de los componentes, `Str` y `Format` para la persona, y el entorno de todos los procesos hijos; y si el locale pedido no está instalado, deja el proceso en `"C"` sin avisar al código.
+- Los procesos hijos de gbpublisher reciben `LANGUAGE` reescrito por el intérprete, no el de la sesión.
+
+DESDE EL IDE (confirmado por Alberto el 27/11/2026). La misma prueba lanzada desde el IDE arranca con `LC_ALL=es_AR.UTF-8`; desde la terminal, con `LC_ALL` vacío. El IDE lanza el programa con `LC_ALL` igual a su `LANG`, y con eso las categorías de la sesión (`LC_NUMERIC`, `LC_TIME`) se pierden: en el IDE los números siguen a `LANG`, y en la aplicación instalada siguen a `LC_NUMERIC`. En una máquina con las dos variables distintas, una prueba desde el IDE no muestra lo que va a ver la persona con el `.deb`.
+
+DESPUÉS DE ASIGNAR, `LC_ALL` QUEDA ESCRITO. Volver a asignar el valor original deja los mismos formatos, pero `LC_ALL` ya no está vacío (`es_AR.UTF-8` en el bloque 4): desde ahí, el proceso y sus hijos ignoran un `LC_NUMERIC` distinto que trajera la sesión.
+
+**Relaciones:** vinculo:GV-03,vinculo:GV-96,vinculo:GV-150,vinculo:GV-204,vinculo:SC-112
 
 ---
 
