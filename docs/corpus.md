@@ -6500,10 +6500,11 @@ EL LOTE DE RETIRO (27/11/2026, decisiones de Alberto)
 - `actualizar-esquema-2.5.0.sh` borra `manual_ayudas` (SC-22, punto 5): se aplica DESPUÉS de instalar la aplicación nueva en todos los puestos. Frena si una vista, una rutina, un disparador o una clave foránea la usa; informa las consultas guardadas que la nombran. Deja un volcado solo de la tabla junto al respaldo completo: repone la tabla sin restaurar toda la base, y sus textos quedan como borrador del manual. Probado en un contenedor con MySQL 8.0.46: los frenos de vista, disparador y clave foránea, la corrida, la segunda corrida y la reposición desde el volcado.
 - `generar-baseline.sh` deja `manual_ayudas` fuera de las tablas semilla; `BBDD_LEEME.md` suma la 2.5.0 a la cadena. El asistente de instalación sigue verificando las 36 ayudas del baseline 2.0.0, que todavía las trae: cambia con el baseline siguiente.
 
+PROBADO (27/11/2026). Alberto aplicó el lote: compila sin `gb.form.htmlview`, y `FAvisoLegal` y `FDiccionario` funcionan con `TextEdit`. El texto legal aparecía desde el final; se corrigió con `Pos = 0` después de `RichText` y `ScrollY = 0` en `Form_Show` (GV-64).
+
 **Relaciones:** vinculo:SC-24,vinculo:SC-11,vinculo:SC-22,vinculo:SC-50,vinculo:GV-64,vinculo:GV-108,vinculo:GV-43,vinculo:GV-17,vinculo:SC-22
 
-**PENDIENTE:** Probar el lote en Mint: compilar sin gb.form.htmlview; FAvisoLegal en el arranque y desde el menú (texto, estilos con Qt6, botón de la licencia); FDiccionario con una palabra en español y otra en inglés.
-Aplicar la 2.5.0 después de instalar el .deb nuevo.
+**PENDIENTE:** Aplicar la 2.5.0 después de instalar el .deb nuevo, en todos los puestos.
 
 ---
 
@@ -8444,6 +8445,8 @@ CONSECUENCIA
 Un HTML hecho para mostrarse en `TextEdit` puede llevar una sola hoja de estilo en la cabecera: no hace falta repetir los estilos en cada elemento.
 
 SIN EVENTO Link (código fuente de gb.qt6.ext 3.22.0, `CTextEdit.cpp`). La declaración del evento está comentada (`//GB_EVENT("Link", …)`) y su manejador, dentro de un `#if 0`: un enlace se dibuja pero pulsarlo no llega al código. Un texto que necesita abrir algo lleva un botón; las direcciones, como texto. Por eso `FAvisoLegal` abre la licencia con `btnVerLicencia` (SC-112).
+
+LA VISTA DESPUÉS DE RichText (Mint, Gambas 3.22, gb.qt6.ext, 27/11/2026). Con `ReadOnly` y `Wrap = True`, un texto largo asignado a `RichText` en `Form_Open` se veía desde el final: había que subir con la barra para leerlo. Lo resuelven dos líneas, medidas en `FAvisoLegal`: `Pos = 0` justo después de asignar `RichText` (en el código de 3.22.0, `Pos` llama a `setTextCursor`, que lleva la vista al cursor) y `ScrollY = 0` en `Form_Show`, cuando el ajuste de línea ya se recalculó con el ancho real. Todo `TextEdit` que muestre un texto para leer las lleva.
 
 **Relaciones:** vinculo:GV-37,vinculo:GV-52,vinculo:SC-24,vinculo:SC-112
 
