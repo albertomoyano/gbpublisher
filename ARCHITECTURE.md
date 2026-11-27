@@ -107,9 +107,9 @@ En cada formulario, cada componente tiene un rol único, espera un tipo de infor
 
 La ausencia de inteligencia implícita no es una carencia sino una garantía: lo que ocurre en el sistema es siempre visible, comprensible y reproducible. La aplicación no reemplaza el criterio editorial: lo acompaña, haciendo visibles los pasos y reduciendo la fricción cognitiva.
 
-### Ayuda contextual
+### El manual
 
-La aplicación incorpora ayuda contextual inspirada en las `man pages` de UNIX: información breve, localizada y orientada a la tarea concreta, accesible sin abandonar el flujo de trabajo. El sistema se documenta a sí mismo.
+La ayuda de gbpublisher es un libro hecho con la propia aplicación: se escribe en Markdown, pasa por la misma cadena que cualquier libro y viaja en el paquete como HTML, que el menú «Acerca de…» abre en el navegador. Para buscar están sus índices de funciones, términos y conceptos. El sistema se documenta a sí mismo, y el manual es a la vez un ejemplo de lo que la aplicación produce.
 
 ---
 

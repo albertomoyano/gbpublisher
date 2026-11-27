@@ -18,7 +18,7 @@ gbpublisher-baseline-2.0.0.sql
 ```
 
 Ese archivo contiene la estructura completa de la base y los datos propios
-de la aplicación: ayudas del manual, consultas predefinidas, tipos de
+de la aplicación: ayudas del manual (hasta la 2.5.0, que borra esa tabla), consultas predefinidas, tipos de
 entrada y catálogo de campos de la bibliografía, formatos de página, roles
 CRediT, idiomas, países, licencias y tipos de declaración. No contiene
 datos editoriales de nadie: ni proyectos, ni artículos, ni usuarios, ni
@@ -317,8 +317,8 @@ Las propiedades que todo script de actualización debe tener:
 
 | Caso | Paso | Script |
 |---|---|---|
-| Instalación nueva | Instalación | `gbpublisher-baseline-2.0.0.sql` con `instalar-gbpublisher.sh`, y después `actualizar-esquema-2.1.0.sh` |
-| Instalación anterior a la 2.0.0 | Actualizaciones | `actualizar-esquema-1.1.0.sh` … `actualizar-esquema-1.34.0.sh`, `actualizar-esquema-2.0.0.sh` y `actualizar-esquema-2.1.0.sh`, en orden, desde la última que tenga registrada |
+| Instalación nueva | Instalación | `gbpublisher-baseline-2.0.0.sql` con `instalar-gbpublisher.sh`, y después `actualizar-esquema-2.1.0.sh` … `actualizar-esquema-2.5.0.sh`, en orden |
+| Instalación anterior a la 2.0.0 | Actualizaciones | `actualizar-esquema-1.1.0.sh` … `actualizar-esquema-1.34.0.sh` y `actualizar-esquema-2.0.0.sh` … `actualizar-esquema-2.5.0.sh`, en orden, desde la última que tenga registrada |
 
 Para saber en qué punto está una base:
 
@@ -355,6 +355,14 @@ Se deshace borrando las dos tablas nuevas y restaurando el respaldo; el
 script muestra los dos comandos. La aplicación de la 2.0.0 no funciona con
 una base sin migrar, ni la 1.x con una migrada: hay que aplicar la
 actualización antes de abrir la versión nueva.
+
+La 2.5.0 borra `manual_ayudas`, la tabla de la ayuda contextual vieja: la
+ayuda es ahora el manual de gbpublisher, un libro hecho con la propia
+aplicación, que el menú «Acerca de…» abre en el navegador. Se aplica
+**después** de instalar la aplicación nueva en todos los puestos: la
+anterior no abre sin la tabla. Antes de borrarla deja, junto al respaldo
+completo, un volcado solo de esa tabla; con él se repone sin restaurar toda
+la base, y el script muestra el comando.
 
 ### El respaldo diario de la aplicación
 
@@ -452,7 +460,7 @@ SELECT COUNT(*) FROM information_schema.tables
 
 -- Datos semilla presentes
 SELECT
-  (SELECT COUNT(*) FROM manual_ayudas)         AS ayudas,      -- 36
+  (SELECT COUNT(*) FROM manual_ayudas)         AS ayudas,      -- 36 (la 2.5.0 borra la tabla)
   (SELECT COUNT(*) FROM consultas)             AS consultas,   -- 82
   (SELECT COUNT(*) FROM cmb_biblatex)          AS biblatex,    -- 120
   (SELECT COUNT(*) FROM bibtex_campo_catalogo) AS campos_bib,  -- 105

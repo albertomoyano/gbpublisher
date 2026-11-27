@@ -1414,7 +1414,11 @@ REGLAS OPERATIVAS
 
 ### SC-24 — Ayuda contextual: un HTML por ayuda en /usr/share/gbpublisher/ayudas/, producido fuera de la aplicación
 
-**Estado:** vigente · **Evidencia:** inferida · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+**Estado:** deprecada · **Evidencia:** inferida · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+
+DEPRECADA (27/11/2026). Reemplazada por SC-112: la ayuda es un libro, l-AYUDA, hecho con gbpublisher, y la búsqueda está en sus índices. No hay ayuda contextual ni gbAyudas. El retiro de HtmlView, que estaba en el pendiente de esta entrada, pasó a SC-112.
+
+Texto histórico:
 
 DECISIÓN CERRADA. La ayuda contextual deja la base de datos (`manual_ayudas`) y pasa a archivos HTML que se distribuyen con el paquete. Solo en español. Lo que excede la ayuda de un campo va al manual.
 
@@ -1495,9 +1499,7 @@ LO QUE SE RETIRA
 
 `FAyudas`, `m_EstilosHTML` (solo lo usaban las ayudas), los seis idiomas con su detección, y la tabla `manual_ayudas`. La tabla se elimina con una actualización de esquema (SC-22), recién cuando la ayuda nueva funcione. `FAyudaABM` ya salió el 18/11/2026: nada lo abría (SC-97).
 
-**Relaciones:** vinculo:SC-11,vinculo:GV-64,vinculo:SC-22,vinculo:GV-56,vinculo:SC-05,vinculo:GV-20,vinculo:SC-50
-
-**PENDIENTE:** Sin decidir: (1) lista plana o árbol por tabla; (2) el filtro de la lista, solo por título o también por contenido; (3) prefijo de widget para TextEdit, que la convención no tiene; (4) esquema de la base de gbAyudas y su ubicación: irá en una RF, como RF-08 para gbCorpus. Aparte: pasar FAvisoLegal y FDiccionario a TextEdit y retirar HtmlView del proyecto (FDiccionario, probado antes con una respuesta real de la RAE); renombrar los cinco controles que hoy se llaman como su columna (arxiv_id, book_author, handle_system, sponsors, tipo_sujetos_investigacion), cotejando antes sus usos (GV-56).
+**Relaciones:** vinculo:SC-11,vinculo:GV-64,vinculo:SC-22,vinculo:GV-56,vinculo:SC-05,vinculo:GV-20,vinculo:SC-50,reemplazada_por:SC-112
 
 ### SC-25 — Primeras del libro: piezas sin cuerpo, datos de la base y textos en Markdown
 
@@ -2901,7 +2903,7 @@ Queda registrado para no usar ese camino creyendo que funciona.
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbCorpus 0.0.10 (esquema 2) / gbShortcodes 0.0.5 (esquema 5) / Gambas 3.22.1 / Linux Mint; código de los dos repositorios · **Verificado:** 2026-10
 
-DECISIÓN CERRADA (decisión de Alberto). gbCorpus, gbShortcodes y gbAyudas son aplicaciones satélite de gbpublisher y siguen un solo modelo, descrito acá. Lo propio de cada una —su base y su contrato de exportación— está en su entrada de referencia: RF-08, RF-11 y SC-24.
+DECISIÓN CERRADA (decisión de Alberto). gbCorpus y gbShortcodes son aplicaciones satélite de gbpublisher y siguen un solo modelo, descrito acá. Lo propio de cada una —su base y su contrato de exportación— está en su entrada de referencia: RF-08 y RF-11.
 
 QUÉ SON
 
@@ -2910,9 +2912,6 @@ Programas aparte, en Gambas 3 y SQLite, que mantienen fuera de la base MySQL dat
     aplicación     base                                 exporta a gbpublisher
     gbCorpus       ~/.gbcorpus/corpus.sqlite            docs/corpus.md (perfil documental)
     gbShortcodes   ~/.gbshortcodes/shortcodes.sqlite    .hidden/shortcodes/
-    gbAyudas       a definir (SC-24)                    .hidden/ayudas/
-
-gbAyudas todavía no existe: cuando se construya, sigue esta entrada.
 
 LA BASE
 
@@ -2924,8 +2923,6 @@ LA BASE
 ALCANCE: LA APLICACIÓN LEE, PULE Y EXPORTA
 
 La aplicación consulta, navega, pule los textos y exporta. No da de alta ni elimina, y no cambia el comportamiento de lo que guarda. Las altas, las bajas, los cambios de estado y de comportamiento se acuerdan en la conversación y se aplican por script SQL. Una herramienta que crea reglas con un botón termina llena de reglas que nadie decidió.
-
-La excepción está decidida en SC-24: gbAyudas da de alta y de baja, porque es el editor de las ayudas.
 
 EL IMPORTADOR
 
@@ -2995,7 +2992,7 @@ EXPORTACIÓN
 
 Determinista: orden fijo y sin fecha de generación. Dos exportaciones del mismo contenido dan archivos idénticos, y el diff de git muestra solo lo que cambió. Cada aplicación exporta además un volcado SQL restaurable, en texto, como respaldo que se puede comparar en git.
 
-La carpeta de destino dentro de gbpublisher entra entera al `.deb`. Por eso la exportación la deja igual a la base: gbShortcodes ofrece borrar lo que no es del catálogo, y gbAyudas hace lo mismo (SC-24).
+La carpeta de destino dentro de gbpublisher entra entera al `.deb`. Por eso la exportación la deja igual a la base: gbShortcodes ofrece borrar lo que no es del catálogo.
 
 COTEJO ANTES DE ESCRIBIR UN SCRIPT
 
@@ -3015,9 +3012,10 @@ CADA APLICACIÓN
 
 - gbCorpus: la base en RF-08. Tres exportaciones: el corpus completo, con todos los estados (va a `docs/corpus.md` de gbpublisher); las reglas vigentes de las familias marcadas como operativas; el volcado SQL.
 - gbShortcodes: la base, el contrato de exportación y cada migración en RF-11. gbpublisher lee el catálogo según SC-34.
-- gbAyudas: el diseño de las ayudas, la conversión, los estados, la exportación y el visor en SC-24. La entrada de referencia de su base se escribe cuando se construya.
 
-**Relaciones:** vinculo:SC-19,vinculo:RF-08,vinculo:RF-11,vinculo:SC-24,vinculo:SC-34,vinculo:SC-13,vinculo:SC-11,vinculo:GV-30,vinculo:SC-52
+GBAYUDAS NO SE CONSTRUYE (27/11/2026). La ayuda es un libro hecho con gbpublisher (SC-112) y SC-24 quedó deprecada. Las aplicaciones satélite son dos, y la que iba a ser la excepción del alcance (dar de alta y de baja) ya no existe.
+
+**Relaciones:** vinculo:SC-19,vinculo:RF-08,vinculo:RF-11,vinculo:SC-34,vinculo:SC-13,vinculo:SC-11,vinculo:GV-30,vinculo:SC-52,vinculo:SC-112
 
 **PENDIENTE:** Dos correcciones de código derivadas de esta entrada, entregadas con gbcorpus-act-17: (1) gbCorpus busca el importador primero en el sistema y después en «engine/» del proyecto (FMain.RutaImportador), al revés de lo que fija «Recursos que viajan con el programa»; (2) el .project de gbShortcodes declara en ExtraFiles solo «engine», y la aplicación instalada busca en /usr/share/gbshortcodes también esquema/carga-inicial.sql y las migraciones. Verificar las dos en Mint y quitar este pendiente.
 
@@ -6450,6 +6448,63 @@ PROBADO EN EL CONTENEDOR (26/11/2026):
 Crossref admite <i> en los títulos y hoy recibe el título plano.
 El sumario del PDF del número (numero-maestro-latex.xsl) arma el título con f:titulo-tramos: sale sin la cursiva.
 
+### SC-112 — Ayuda de gbpublisher: un libro, l-AYUDA, hecho con la propia aplicación; la búsqueda está en los índices del manual y la aplicación solo lo abre
+
+**Estado:** vigente · **Evidencia:** inferida · **Entorno:** gbpublisher / cadena de libros (Markdown, DocBook 5.2, EPUB, HTML, PDF); código en disco revisado el 27/11/2026 · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 27/11/2026). Toda la ayuda sale de la aplicación. Se escribe como un libro más, en el proyecto `l-AYUDA`, y gbpublisher lo convierte en EPUB, HTML y PDF por la cadena de libros, sin un camino propio. Reemplaza a SC-24: no hay ayudas sueltas por dato, no hay gbAyudas y no hay visor dentro de la aplicación.
+
+POR QUÉ
+- Una sola fuente y una sola cadena: el `.md`, el DocBook canónico y las tres salidas, como cualquier libro. Su mantenimiento es trabajo de editing, no de programación.
+- El manual es un ejemplo del uso de la aplicación, y cada vez que se regenera prueba la cadena de libros: si el manual no sale, la cadena se rompió.
+- Se retira el problema del idioma: la ayuda es en español y nada se deduce de `System.Language`, que es el locale del proceso y no el idioma que la persona eligió para leer.
+
+LA BÚSQUEDA ESTÁ EN EL MANUAL, NO EN LA APLICACIÓN
+El manual lleva los índices que haga falta (de funciones, de términos, de conceptos), con el mecanismo de índices de los libros. No hay ayuda contextual: Ctrl+F1 no abre nada, y los controles no llevan una clave de ayuda.
+
+LA FUENTE Y LA COPIA A gbpublisher (decisión de Alberto, 27/11/2026)
+`l-AYUDA` es un proyecto de libro en la máquina de Alberto: sus `.md` y sus metadatos en su base, como cualquier libro. Cuando cambia, Alberto genera el HTML y copia la carpeta `docs/` del proyecto `l-AYUDA` (el `index.html` y `assets/`, con las figuras en `assets/media/`, como la deja `generar_html_libro.sh` con destino autónomo) a `.hidden/manual/` del proyecto gbpublisher. Solo el HTML: el EPUB y el PDF del manual no viajan en el `.deb` (decisión de Alberto). Es el mismo modelo que el corpus, que gbCorpus exporta a `docs/`. Un script propio copia solo los archivos nuevos o modificados, y borra lo que ya no está en la salida: la carpeta entra entera al `.deb`, y sin el borrado viajarían páginas y figuras viejas. Otras personas pueden escribir partes en Markdown; Alberto las revisa y las incorpora.
+
+El `.deb` lleva la última copia de `.hidden/manual/`. El manual no se reconstruye en cada versión: se regenera cuando cambia su contenido.
+
+DISTRIBUCIÓN Y ACCESO
+- `.hidden/manual/` entra en los `ExtraFiles` del proyecto, como `engine` o `xslt`, y se instala en `/usr/share/gbpublisher/manual/`. Se lee en su lugar (SC-11): no se copia a `~/.gbpublisher`.
+- El menú «Acerca de…», ítem «Manual de gbpublisher» (`menuAcercaAyuda`), abre `index.html` con el navegador del sistema. Es la única salida a la que se accede desde la aplicación (decisión de Alberto).
+- `m_FuncionesGenericas.AbrirManual` arma la ruta con `m_InicioCierre.RutaRecursos()` (`.hidden/` desde el IDE, `/usr/share/gbpublisher` instalado), controla que el archivo exista y llama a `Desktop.Open` sin espera: el mismo camino que `m_GenerarSalidasLibro.AbrirSalidaEnVisor`. Sin espera, un fallo de xdg-open no llega al llamador; por eso la existencia se controla antes (GV-43). Con espera, la interfaz se congela (GV-17).
+- Hasta que el manual tenga contenido, `.hidden/manual/index.html` es una página «En construcción» (27/11/2026), sin recursos externos.
+
+CAPTURAS DE PANTALLA
+El manual lleva capturas (decisión de Alberto). Una captura no avisa cuando el formulario que muestra cambia: mantenerlas al día es parte del editing del manual.
+
+LO QUE SE RETIRA (inventario del 27/11/2026, sobre el código en disco)
+- `FAyuda` (abierto por `FMain`, menú «las Ayudas rápidas», `menuAcercaAyuda`), `FAyudas` y `m_EstilosHTML`.
+- `m_FuncionesGenericas.MostrarAyuda`: buscaba en `manual_ayudas` por `Application.ActiveControl.Name`, no por `Tag`.
+- La atención de Ctrl+F1 en `FMain`, `FAutores`, `FMetadatosLibro` y `FSiglas`, y el comentario de la ayuda futura en `FMetadatosCapitulos`.
+- La detección del idioma por `System.Language` (`FAyuda.Form_Open`, `FAyudas.DetectarIdioma`).
+- La tabla `manual_ayudas`, con una actualización de esquema (SC-22), y su línea en el control de esquema de `m_ConexionBD` (`hEsquema["manual_ayudas"]`).
+- La carpeta vacía `.hidden/ayudas/`, que preparaba SC-24.
+Deja de hacer falta renombrar los cinco controles que se llamaban como su columna (pendiente de SC-24): la clave de ayuda era su único motivo.
+
+EL TAG NO SE TOCA (revisado el 27/11/2026). La ayuda nunca usó el `Tag`: la clave por `Tag` de SC-24 no se llegó a implementar. En los 59 `.form`, el `Tag` está solo en `FDiccionario` (`mvRAE`, «Closed», que lo usa `tbHelp_Click`) y en los seis ítems de idioma de `FAyuda`, que se van con el formulario. En el código, los usos son propios y ajenos a la ayuda: los nodos del árbol (`m_Estructura`), el menú de temas (`m_ResaltadoSintaxis`), el motor de traducción en el `HttpClient` (`FTraducir`), la línea de la marca (`m_GestorComentarios`) y `FDiccionario`.
+
+PROBADO (27/11/2026). Alberto aplicó los parches del menú y de `AbrirManual`, limpió y compiló sin errores: el ítem «Manual de gbpublisher» abre la página «En construcción» desde el IDE y con el `.deb` instalado.
+
+EL SCRIPT DE COPIA (27/11/2026). `copiar-manual.sh`, en la raíz de gbManual, el proyecto de `l-AYUDA`. Copia `docs/` a `~/05_Proyectos/gbPublisher/.hidden/manual/` con `rsync --checksum --delete`: solo lo que cambió de contenido (cada generación reescribe todo y cambia las fechas) y borra lo que ya no está. `--simular` muestra lo que haría. Frena si `docs/index.html` falta o está vacío (con el borrado, vaciaría el manual de la aplicación) y si el destino no es un `.hidden/manual` al lado de `.hidden/engine`. Probado por Alberto con la página «En construcción», que ahora vive en `docs/` de gbManual.
+
+EL LOTE DE RETIRO (27/11/2026, decisiones de Alberto)
+- Salen `FAyuda`, `FAyudas`, `m_EstilosHTML`, `MostrarAyuda`, el `Form_KeyRelease` de Ctrl+F1 en `FMain`, `FAutores`, `FMetadatosLibro`, `FSiglas` y `FMetadatosCapitulos`, la línea de `manual_ayudas` en `m_ConexionBD` y la carpeta `.hidden/ayudas/`. Los íconos de las banderas (`es`, `br`, `en`, `it`, `fr`, `de` y sus variantes `2`) solo los usaba `FAyuda`.
+- `FAvisoLegal` y `FDiccionario` pasan de `HtmlView` a `TextEdit` (`txaLegales`, `txaDiccionario`; `ReadOnly`, `Wrap = True`, GV-64). Con eso `gb.form.htmlview` sale del proyecto.
+- `TextEdit` no tiene evento `Link` (GV-64): el texto legal no lleva enlaces. La licencia se abre con el botón «Ver la licencia» (`btnVerLicencia`, `Desktop.Open`, GV-43) y las direcciones van como texto. El manual lleva la misma información con sus enlaces.
+- El prefijo de `TextEdit` es `txa` (decisión de Alberto), como `txaTabla` y `txaTexto`. Los `TextEdit` que hoy se llaman `txt…` no se renombran en este lote.
+- `FDiccionario` escapa `&`, `<` y `>` (`EscaparHtml`) en todo lo que viene del servicio o de la persona: la palabra, las definiciones, los sinónimos, los ejemplos, el estado HTTP y el texto del error. Antes iban crudos al HTML.
+- `actualizar-esquema-2.5.0.sh` borra `manual_ayudas` (SC-22, punto 5): se aplica DESPUÉS de instalar la aplicación nueva en todos los puestos. Frena si una vista, una rutina, un disparador o una clave foránea la usa; informa las consultas guardadas que la nombran. Deja un volcado solo de la tabla junto al respaldo completo: repone la tabla sin restaurar toda la base, y sus textos quedan como borrador del manual. Probado en un contenedor con MySQL 8.0.46: los frenos de vista, disparador y clave foránea, la corrida, la segunda corrida y la reposición desde el volcado.
+- `generar-baseline.sh` deja `manual_ayudas` fuera de las tablas semilla; `BBDD_LEEME.md` suma la 2.5.0 a la cadena. El asistente de instalación sigue verificando las 36 ayudas del baseline 2.0.0, que todavía las trae: cambia con el baseline siguiente.
+
+**Relaciones:** vinculo:SC-24,vinculo:SC-11,vinculo:SC-22,vinculo:SC-50,vinculo:GV-64,vinculo:GV-108,vinculo:GV-43,vinculo:GV-17,vinculo:SC-22
+
+**PENDIENTE:** Probar el lote en Mint: compilar sin gb.form.htmlview; FAvisoLegal en el arranque y desde el menú (texto, estilos con Qt6, botón de la licencia); FDiccionario con una palabra en español y otra en inglés.
+Aplicar la 2.5.0 después de instalar el .deb nuevo.
+
 ---
 
 ## RF — Referencia de API
@@ -7008,7 +7063,8 @@ FileView
 - No navega solo: el doble clic o Enter dispara `Activate`, también sobre una carpeta (`ShowDirectory`). El que lo usa decide.
 - `Current` es el nombre seleccionado, o vacío si no hay selección; `Path` es `Dir &/ Current`.
 - Dispara `Select` al cambiar la selección, también con el teclado, y `Refresh` al terminar cada recarga.
-- Vigila el disco solo si está cargado `gb.inotify` (`Component.IsLoaded`): sin él, lo que cambia afuera aparece recién con `Reload`.
+- Vigila el disco solo si está cargado `gb.inotify` (`Component.IsLoaded`): sin él, lo que cambia afuera aparece recién con `Reload`. Lo mismo `DirView` (`DirView.class:76` en 3.22.0).
+- POR ESO `gb.inotify` NO SE DESAFECTA, aunque ninguna línea del proyecto lo nombre: lo usa `gb.form` por dentro, y sacarlo no da error de compilación ni de ejecución, solo apaga la vigilancia de `FFileManager` (SC-103). Pasó el 27/11/2026: en una revisión de componentes sin uso salió de la lista y hubo que volver a marcarlo.
 - `FileCount`, `DirCount` y `TotalSize` describen la carpeta mostrada; se calculan al recargar, que es asíncrono: justo después de cambiar `Dir` pueden ser los anteriores.
 - Trae renombrado en línea (`Rename()`) con un evento `Rename` que se cancela devolviendo True.
 
@@ -8387,7 +8443,9 @@ CONSECUENCIA
 
 Un HTML hecho para mostrarse en `TextEdit` puede llevar una sola hoja de estilo en la cabecera: no hace falta repetir los estilos en cada elemento.
 
-**Relaciones:** vinculo:GV-37,vinculo:GV-52,vinculo:SC-24
+SIN EVENTO Link (código fuente de gb.qt6.ext 3.22.0, `CTextEdit.cpp`). La declaración del evento está comentada (`//GB_EVENT("Link", …)`) y su manejador, dentro de un `#if 0`: un enlace se dibuja pero pulsarlo no llega al código. Un texto que necesita abrir algo lleva un botón; las direcciones, como texto. Por eso `FAvisoLegal` abre la licencia con `btnVerLicencia` (SC-112).
+
+**Relaciones:** vinculo:GV-37,vinculo:GV-52,vinculo:SC-24,vinculo:SC-112
 
 **PENDIENTE:** No se miró en la consola si Qt conserva el background-color del code en línea. No se probaron enlaces ni tablas con varias filas o columnas.
 
@@ -9410,9 +9468,9 @@ En el proyecto, el hilo de una nota se carga entero por `RichText` (`m_Notas`, S
 - `Load(archivo#ancla)`: es lo único que procesa un ancla. Busca el elemento por `id` o `name` (`find_anchor`, `c_htmldocument.cpp`) y desplaza hasta él; el documento tiene que pasar por un archivo temporal. LEÍDO en el fuente.
 - El control no expone su desplazamiento: no hay forma de «bajar solo si ya estaba al final».
 
-Por eso se descartó para el hilo de las notas (SC-60), y es una razón más para retirar HtmlView del proyecto (pendiente de SC-24).
+Por eso se descartó para el hilo de las notas (SC-60), y es una razón más para retirar HtmlView del proyecto (pendiente de SC-112).
 
-**Relaciones:** vinculo:SC-24,vinculo:GV-107,vinculo:SC-60
+**Relaciones:** vinculo:SC-24,vinculo:GV-107,vinculo:SC-60,vinculo:SC-112
 
 **PENDIENTE:** Load con ancla no se midió en ejecución.
 

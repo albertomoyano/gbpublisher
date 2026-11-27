@@ -8,7 +8,7 @@
 '             de integridad de los .md, motor de búsqueda literal en texto
 '             UTF-8 y chequeo de dependencias del sistema.
 ' Dependencias: m_InicioCierre, m_ConexionBD, m_Sonido, m_Constantes, FMain,
-'             FEstructuraResultados, FAyudas, FAvisoLegal.
+'             FEstructuraResultados, FAvisoLegal.
 '
 ' REVISIÓN — CORRECCIÓN DEL BUG DE RUTA DE PROYECTO
 ' -------------------------------------------------
@@ -1766,56 +1766,41 @@ Public Sub IrAParFootnote()
 End
 
 ' ============================================
-' Función   : MostrarAyuda
-' Propósito : Muestra la ayuda contextual del control activo, delegando en
-'             FAyudas la selección del idioma.
+' Función   : AbrirManual
+' Propósito : Abre el manual de gbpublisher (el HTML del libro l-AYUDA) con el
+'             navegador del sistema. Se lee en su lugar (SC-11, SC-112):
+'             .hidden/manual desde el IDE, /usr/share/gbpublisher/manual
+'             instalado.
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
-Public Sub MostrarAyuda()
+Public Sub AbrirManual()
 
-  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
-  Dim oControl As Object
-  Dim sNombreControl As String
-  Dim hResult As Result
-  Dim fAyuda As New FAyudas
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
 
-  ' --- 2. OBTENER EL CONTROL ACTIVO ---
-  oControl = Application.ActiveControl
-  If IsNull(oControl) Then Return
+  ' --- 2. RUTA DEL MANUAL ---
+  ' RutaRecursos RESUELVE IDE O INSTALADO: UNA RUTA FIJA FALLA EN UNO DE LOS DOS
+  sRuta = m_InicioCierre.RutaRecursos() &/ "manual" &/ "index.html"
 
-  sNombreControl = oControl.Name
-  If sNombreControl = "" Then Return
+  ' --- 3. EL ARCHIVO TIENE QUE EXISTIR ---
+  ' ES LA ÚNICA FORMA DE INFORMAR ESTE FALLO: Desktop.Open SIN ESPERA NO LO
+  ' REPORTA (GV-43)
+  If Not Exist(sRuta) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontró el manual de gbpublisher." & gb.NewLine & gb.NewLine &
+      "Se buscó:" & gb.NewLine & sRuta)
+    Return
+  Endif
 
-  ' --- 3. CONSULTA A BASE DE DATOS ---
-  ' Try EXPLÍCITO (RC-GM-02): SIN ÉL UN FALLO DE SQL SE PROPAGA HACIA ARRIBA
-  Try hResult = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS total FROM manual_ayudas WHERE componente = &1", sNombreControl)
+  ' --- 4. ABRIR CON EL NAVEGADOR DEL SISTEMA (RC-GM-02) ---
+  ' SIN Wait: CON ESPERA LA INTERFAZ QUEDA CONGELADA (GV-17, GV-43)
+  Try Desktop.Open(sRuta)
   If Error Then
     m_Sonido.sonar("Error")
-    Message.Error("No se pudo consultar la ayuda:" & Chr(10) & Error.Text)
-    Return
+    Message.Error("No se pudo abrir el manual con el navegador del sistema:" & gb.NewLine &
+      sRuta & gb.NewLine & gb.NewLine & Error.Text)
   Endif
-
-  ' --- 4. VERIFICAR QUE HAY AYUDA PARA ESTE COMPONENTE ---
-  ' If ANIDADO Y NO "Not hResult.Available Or hResult!total = 0": Or NO ES
-  ' SHORT-CIRCUIT (RC-GM-17), ASÍ QUE CON EL Result NO DISPONIBLE SE EVALUABA
-  ' IGUAL hResult!total Y REVENTABA
-  If Not hResult.Available Then
-    m_Sonido.sonar("Info")
-    Message.Info("No hay ayuda disponible para este campo.")
-    Return
-  Endif
-
-  If hResult!total = 0 Then
-    m_Sonido.sonar("Info")
-    Message.Info("No hay ayuda disponible para este campo.")
-    Return
-  Endif
-
-  ' --- 5. DELEGAR EN FAyudas ---
-  ' NO SE PASA TEXTO: FAyudas BUSCA SEGÚN EL IDIOMA DEL SISTEMA
-  fAyuda.MostrarTexto(sNombreControl)
-  fAyuda.ShowModal()
 
 End
 

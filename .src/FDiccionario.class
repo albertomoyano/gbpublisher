@@ -15,6 +15,12 @@ Public Sub Form_Show()
 
 End
 
+' ============================================
+' Función   : Form_Open
+' Propósito : Carga los idiomas y, si ya hay una palabra, la consulta
+' Parámetros: (ninguno — evento de formulario)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub Form_Open()
 
   ' CONFIGURAR IDIOMAS DISPONIBLES
@@ -34,7 +40,7 @@ Public Sub Form_Open()
 
   ' MENSAJE INICIAL SI EL TEXTBOX ESTÁ VACÍO
   If Trim(txtPalabra.Text) = "" Then
-    HtmlViewDiccionario.Html = "<p>Ingrese una palabra y presione Consultar.</p>"
+    txaDiccionario.RichText = "<p>Ingrese una palabra y presione Consultar.</p>"
   Else
     ' SI YA HAY PALABRA, CONSULTAR AUTOMÁTICAMENTE
     ConsultarDiccionario()
@@ -48,6 +54,13 @@ Public Sub btnConsultar_Click()
 
 End
 
+' ============================================
+' Función   : ConsultarDiccionario
+' Propósito : Pide la palabra al servicio del idioma elegido, de forma
+'             asíncrona; la respuesta llega a ClienteDiccionario_Finished
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Private Sub ConsultarDiccionario()
 
   Dim sPalabra As String
@@ -73,7 +86,7 @@ Private Sub ConsultarDiccionario()
   End Select
 
   ' PETICIÓN HTTP
-  HtmlViewDiccionario.Html = "<p><i>Consultando...</i></p>"
+  txaDiccionario.RichText = "<p><i>Consultando...</i></p>"
 
   $hClient = New HttpClient As "ClienteDiccionario"
   $hClient.URL = sUrl
@@ -83,6 +96,12 @@ Private Sub ConsultarDiccionario()
 
 End
 
+' ============================================
+' Función   : ClienteDiccionario_Finished
+' Propósito : Muestra la respuesta del servicio, o el motivo del fallo
+' Parámetros: (ninguno — evento de HttpClient)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub ClienteDiccionario_Finished()
 
   Dim sRespuesta As String
@@ -96,18 +115,18 @@ Public Sub ClienteDiccionario_Finished()
   If Last.Code <> 200 Then
     Select Case Last.Code
       Case 429
-        HtmlViewDiccionario.Html = "<p style='color:orange;'><b>Límite de consultas alcanzado</b><br>" &
+        txaDiccionario.RichText = "<p style='color:orange;'><b>Límite de consultas alcanzado</b><br>" &
           "Tier Free: máximo 10 consultas/minuto o 100/día.<br>" &
           "Espere 1-2 minutos e intente nuevamente.<br><br>" &
           "<small>Último código: " & Last.Code & "</small></p>"
       Case 404
-        HtmlViewDiccionario.Html = "<p style='color:red;'>No se encontró definición para esta palabra.</p>"
+        txaDiccionario.RichText = "<p style='color:red;'>No se encontró definición para esta palabra.</p>"
       Case 503, 504
-        HtmlViewDiccionario.Html = "<p style='color:red;'><b>Servicio temporalmente no disponible</b><br>" &
+        txaDiccionario.RichText = "<p style='color:red;'><b>Servicio temporalmente no disponible</b><br>" &
           "El servidor está experimentando problemas. Intente nuevamente en unos minutos.</p>"
       Case Else
-        HtmlViewDiccionario.Html = "<p style='color:red;'><b>Error HTTP " & Last.Code & "</b><br>" &
-          "Estado: " & Last.Status & "<br>" &
+        txaDiccionario.RichText = "<p style='color:red;'><b>Error HTTP " & Last.Code & "</b><br>" &
+          "Estado: " & EscaparHtml(Last.Status) & "<br>" &
           "Intente nuevamente más tarde.</p>"
     End Select
     Return
@@ -116,23 +135,37 @@ Public Sub ClienteDiccionario_Finished()
   ' PARSEAR JSON
   Try vJson = JSON.Decode(sRespuesta)
   If Error Then
-    HtmlViewDiccionario.Html = "<p style='color:red;'>Error al procesar respuesta: " & Error.Text & "</p>"
+    txaDiccionario.RichText = "<p style='color:red;'>Error al procesar respuesta: " & EscaparHtml(Error.Text) & "</p>"
     Return
   Endif
 
   ' GENERAR HTML
   sHtml = GenerarHtmlDefiniciones(vJson, $aCodigosIdioma[cmbIdiomas.Index])
-  HtmlViewDiccionario.Html = sHtml
+  txaDiccionario.RichText = sHtml
 
 End
 
+' ============================================
+' Función   : ClienteDiccionario_Error
+' Propósito : Informa que no se pudo conectar con el servicio
+' Parámetros: (ninguno — evento de HttpClient)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub ClienteDiccionario_Error()
 
-  HtmlViewDiccionario.Html = "<p style='color:red;'><b>Error de conexión</b><br>" &
+  txaDiccionario.RichText = "<p style='color:red;'><b>Error de conexión</b><br>" &
     "No se pudo conectar al servidor. Verifique su conexión a Internet.</p>"
 
 End
 
+' ============================================
+' Función   : GenerarHtmlDefiniciones
+' Propósito : Arma el HTML de las definiciones para txaDiccionario. Todo lo
+'             que viene del servicio o de la persona pasa por EscaparHtml
+' Parámetros: vJson As Variant — la respuesta del servicio, ya decodificada
+'             sIdioma As String — código del idioma consultado
+' Retorna   : String — el HTML completo
+' ============================================
 Private Function GenerarHtmlDefiniciones(vJson As Variant, sIdioma As String) As String
 
   Dim cData As Collection
@@ -210,7 +243,7 @@ Private Function GenerarHtmlDefiniciones(vJson As Variant, sIdioma As String) As
     ' OBTENER PALABRA
     sPalabra = txtPalabra.Text
     If cData.Exist("word") Then sPalabra = cData["word"]
-    sHtml &= "<h2>" & sPalabra & "</h2>"
+    sHtml &= "<h2>" & EscaparHtml(sPalabra) & "</h2>"
 
     ' VERIFICAR QUE EXISTA MEANINGS
     If Not cData.Exist("meanings") Then
@@ -258,15 +291,15 @@ Private Function GenerarHtmlDefiniciones(vJson As Variant, sIdioma As String) As
               End Select
             Endif
 
-            ' DEFINICIÓN
-            sHtml &= cSense["description"]
+            ' DEFINICIÓN: TEXTO DEL SERVICIO, ESCAPADO (UN < O UN & ROMPERÍA EL HTML)
+            sHtml &= EscaparHtml(cSense["description"])
 
             ' SINÓNIMOS SI EXISTEN
             If cSense.Exist("synonyms") Then
               If cSense["synonyms"] <> Null Then
                 sSynonyms = cSense["synonyms"]
                 If sSynonyms.Count > 0 Then
-                  sHtml &= "<br><small><b>Sin.:</b> " & sSynonyms.Join(", ") & "</small>"
+                  sHtml &= "<br><small><b>Sin.:</b> " & EscaparHtml(sSynonyms.Join(", ")) & "</small>"
                 Endif
               Endif
             Endif
@@ -287,7 +320,7 @@ Private Function GenerarHtmlDefiniciones(vJson As Variant, sIdioma As String) As
   ' OBTENER PALABRA
   sPalabra = txtPalabra.Text
   If cData.Exist("word") Then sPalabra = cData["word"]
-  sHtml &= "<h2>" & sPalabra & "</h2>"
+  sHtml &= "<h2>" & EscaparHtml(sPalabra) & "</h2>"
 
   If Not cData.Exist("meanings") Then
     sHtml &= "<p>No se encontraron definiciones.</p></body></html>"
@@ -301,7 +334,7 @@ Private Function GenerarHtmlDefiniciones(vJson As Variant, sIdioma As String) As
 
     ' PARTE DEL DISCURSO
     If cMeaning.Exist("partOfSpeech") Then
-      sHtml &= "<h3>" & cMeaning["partOfSpeech"] & "</h3>"
+      sHtml &= "<h3>" & EscaparHtml(cMeaning["partOfSpeech"]) & "</h3>"
     Endif
 
     sHtml &= "<ol>"
@@ -314,12 +347,12 @@ Private Function GenerarHtmlDefiniciones(vJson As Variant, sIdioma As String) As
         cDef = cDefinitions[j]
 
         If cDef.Exist("definition") Then
-          sHtml &= "<li>" & cDef["definition"]
+          sHtml &= "<li>" & EscaparHtml(cDef["definition"])
 
           ' EJEMPLO SI EXISTE - AHORA CON ETIQUETA INTERNACIONALIZADA
           If cDef.Exist("example") Then
             If cDef["example"] <> Null Then
-              sHtml &= "<br><i>" & sEtiquetaEjemplo & ": " & cDef["example"] & "</i>"
+              sHtml &= "<br><i>" & sEtiquetaEjemplo & ": " & EscaparHtml(cDef["example"]) & "</i>"
             Endif
           Endif
 
@@ -333,6 +366,29 @@ Private Function GenerarHtmlDefiniciones(vJson As Variant, sIdioma As String) As
 
   sHtml &= "</body></html>"
   Return sHtml
+
+End
+
+' ============================================
+' Función   : EscaparHtml
+' Propósito : Escapa &, < y > de un texto que va como contenido del HTML de
+'             txaDiccionario. Solo contenido de elementos, nunca atributos:
+'             por eso no escapa comillas
+' Parámetros: sTexto As String — el texto tal como llega
+' Retorna   : String — el texto escapado
+' ============================================
+Private Function EscaparHtml(sTexto As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sResultado As String
+
+  ' --- 2. ESCAPAR: EL & PRIMERO, PARA NO ESCAPAR DOS VECES LO QUE SIGUE ---
+  sResultado = Replace(sTexto, "&", "&amp;")
+  sResultado = Replace(sResultado, "<", "&lt;")
+  sResultado = Replace(sResultado, ">", "&gt;")
+
+  ' --- 3. RETORNO ---
+  Return sResultado
 
 End
 
