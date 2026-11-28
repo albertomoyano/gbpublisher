@@ -41,7 +41,28 @@ DB="gbpublisher"
 PARCHE="actualizacion-1.19.0"
 PREVIO="actualizacion-1.18.0"
 DESCRIPCION="Contrato con gbWeb: libros_md.url_compra, tabla libro_tapa_web y VIEW v_web_libro, v_web_libro_persona, v_web_coleccion, v_web_libro_tapa"
-DIR_RESPALDO="${HOME}/gbpublisher-respaldos"
+# EL RESPALDO VA A LA CARPETA DEL USUARIO QUE PIDIÓ EL PERMISO, NO A LA DE
+# root: CON sudo, HOME ES /root (GV-235, MEDIDO EN MINT 22). sudo DEJA
+# SUDO_USER Y pkexec DEJA PKEXEC_UID. GBP_DIR_RESPALDOS LO FIJA QUIEN LLAMA
+USUARIO_RESPALDO="${SUDO_USER:-}"
+if [ -z "$USUARIO_RESPALDO" ] && [ -n "${PKEXEC_UID:-}" ]; then
+  USUARIO_RESPALDO="$(id -nu "$PKEXEC_UID" 2>/dev/null || true)"
+fi
+HOME_RESPALDO="$HOME"
+if [ -n "$USUARIO_RESPALDO" ]; then
+  HOME_RESPALDO="$(getent passwd "$USUARIO_RESPALDO" | cut -d: -f6 || true)"
+  [ -n "$HOME_RESPALDO" ] || HOME_RESPALDO="$HOME"
+fi
+DIR_RESPALDO="${GBP_DIR_RESPALDOS:-${HOME_RESPALDO}/gbpublisher-respaldos}"
+
+# AL SALIR, POR DONDE SEA, LA CARPETA Y LOS RESPALDOS QUEDAN A NOMBRE DE ESE
+# USUARIO: SIN ESTO SERÍAN DE root Y NO LOS PODRÍA ABRIR NI BORRAR
+entregar_respaldos() {
+  if [ -n "$USUARIO_RESPALDO" ] && [ "$(id -u)" -eq 0 ] && [ -d "$DIR_RESPALDO" ]; then
+    chown -R "${USUARIO_RESPALDO}:" "$DIR_RESPALDO" 2>/dev/null || true
+  fi
+}
+trap entregar_respaldos EXIT
 
 # COLUMNAS ESPERADAS (LAS DE hEsquema PARA LAS TABLAS)
 COLS_LIBROS_ANTES=79

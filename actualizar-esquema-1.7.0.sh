@@ -28,7 +28,28 @@ set -euo pipefail
 DB="gbpublisher"
 PARCHE="actualizacion-1.7.0"
 DESCRIPCION="Retiro de la tabla shortcodes: el catálogo pasa a gbShortcodes"
-DIR_RESPALDO="${HOME}/gbpublisher-respaldos"
+# EL RESPALDO VA A LA CARPETA DEL USUARIO QUE PIDIÓ EL PERMISO, NO A LA DE
+# root: CON sudo, HOME ES /root (GV-235, MEDIDO EN MINT 22). sudo DEJA
+# SUDO_USER Y pkexec DEJA PKEXEC_UID. GBP_DIR_RESPALDOS LO FIJA QUIEN LLAMA
+USUARIO_RESPALDO="${SUDO_USER:-}"
+if [ -z "$USUARIO_RESPALDO" ] && [ -n "${PKEXEC_UID:-}" ]; then
+  USUARIO_RESPALDO="$(id -nu "$PKEXEC_UID" 2>/dev/null || true)"
+fi
+HOME_RESPALDO="$HOME"
+if [ -n "$USUARIO_RESPALDO" ]; then
+  HOME_RESPALDO="$(getent passwd "$USUARIO_RESPALDO" | cut -d: -f6 || true)"
+  [ -n "$HOME_RESPALDO" ] || HOME_RESPALDO="$HOME"
+fi
+DIR_RESPALDO="${GBP_DIR_RESPALDOS:-${HOME_RESPALDO}/gbpublisher-respaldos}"
+
+# AL SALIR, POR DONDE SEA, LA CARPETA Y LOS RESPALDOS QUEDAN A NOMBRE DE ESE
+# USUARIO: SIN ESTO SERÍAN DE root Y NO LOS PODRÍA ABRIR NI BORRAR
+entregar_respaldos() {
+  if [ -n "$USUARIO_RESPALDO" ] && [ "$(id -u)" -eq 0 ] && [ -d "$DIR_RESPALDO" ]; then
+    chown -R "${USUARIO_RESPALDO}:" "$DIR_RESPALDO" 2>/dev/null || true
+  fi
+}
+trap entregar_respaldos EXIT
 TABLA="shortcodes"
 # COLUMNAS DE shortcodes EN EL BASELINE 1.0.0: OTRO CONTEO ES UNA TABLA QUE
 # ESTE SCRIPT NO CONOCE Y NO SE BORRA

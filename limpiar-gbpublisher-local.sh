@@ -58,7 +58,7 @@ echo "--------------------------"
 [[ -d "$SISTEMA/xslt" && -d "$SISTEMA/latex" ]] ||
   { error "No están los recursos del sistema en $SISTEMA. ¿Está instalado gbpublisher?"; exit 1; }
 if pgrep -x gbpublisher >/dev/null 2>&1 || pgrep -f 'gbpublisher\.gambas' >/dev/null 2>&1; then
-  error "gbpublisher está abierto: cerralo antes de limpiar."
+  error "gbpublisher está abierto: ciérrelo antes de limpiar."
   exit 1
 fi
 
@@ -92,7 +92,7 @@ for c in "${A_SACAR[@]}"; do
   printf '    %-12s %6s archivo(s)\n' "$c/" "$(find "$LOCAL/$c" -type f | wc -l)"
 done
 (( ${#SCRIPTS_PAQUETE[@]} > 0 )) && printf '    %-12s %6s copia(s) de los scripts del paquete\n' "scripts/" "${#SCRIPTS_PAQUETE[@]}"
-(( ${#SCRIPTS_PROPIOS[@]} > 0 )) && info "Quedan en scripts/ (tuyos): ${SCRIPTS_PROPIOS[*]}"
+(( ${#SCRIPTS_PROPIOS[@]} > 0 )) && info "Quedan en scripts/ (propios): ${SCRIPTS_PROPIOS[*]}"
 info "No se toca nada más: configuración, conexión, respaldos, patrones, snippets, plantillas, editorial/."
 
 if (( APLICAR == 0 )); then

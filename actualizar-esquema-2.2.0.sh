@@ -45,7 +45,28 @@ DB="gbpublisher"
 PARCHE="actualizacion-2.2.0"
 PREVIO="actualizacion-2.1.0"
 DESCRIPCION="El libro y sus editoriales: libro_editorial (coediciones), migrada desde libros_md"
-DIR_RESPALDO="${HOME}/gbpublisher-respaldos"
+# EL RESPALDO VA A LA CARPETA DEL USUARIO QUE PIDIÓ EL PERMISO, NO A LA DE
+# root: CON sudo, HOME ES /root (GV-235, MEDIDO EN MINT 22). sudo DEJA
+# SUDO_USER Y pkexec DEJA PKEXEC_UID. GBP_DIR_RESPALDOS LO FIJA QUIEN LLAMA
+USUARIO_RESPALDO="${SUDO_USER:-}"
+if [ -z "$USUARIO_RESPALDO" ] && [ -n "${PKEXEC_UID:-}" ]; then
+  USUARIO_RESPALDO="$(id -nu "$PKEXEC_UID" 2>/dev/null || true)"
+fi
+HOME_RESPALDO="$HOME"
+if [ -n "$USUARIO_RESPALDO" ]; then
+  HOME_RESPALDO="$(getent passwd "$USUARIO_RESPALDO" | cut -d: -f6 || true)"
+  [ -n "$HOME_RESPALDO" ] || HOME_RESPALDO="$HOME"
+fi
+DIR_RESPALDO="${GBP_DIR_RESPALDOS:-${HOME_RESPALDO}/gbpublisher-respaldos}"
+
+# AL SALIR, POR DONDE SEA, LA CARPETA Y LOS RESPALDOS QUEDAN A NOMBRE DE ESE
+# USUARIO: SIN ESTO SERÍAN DE root Y NO LOS PODRÍA ABRIR NI BORRAR
+entregar_respaldos() {
+  if [ -n "$USUARIO_RESPALDO" ] && [ "$(id -u)" -eq 0 ] && [ -d "$DIR_RESPALDO" ]; then
+    chown -R "${USUARIO_RESPALDO}:" "$DIR_RESPALDO" 2>/dev/null || true
+  fi
+}
+trap entregar_respaldos EXIT
 TABLA="libro_editorial"
 
 # LAS DOS CLAVES DE IDENTIDAD: LA MISMA EDITORIAL VISTA DESDE EL LIBRO Y
@@ -164,7 +185,7 @@ info "Servidor: ${VERSION}"
 
 # LA CADENA ES ORDENADA: 2.2.0 VA SOBRE 2.1.0
 if [ "$(valor "SELECT COUNT(*) FROM \`${DB}\`.esquema_version WHERE parche='${PREVIO}';")" != "1" ]; then
-  error "Falta la actualización 2.1.0. Aplicala primero (actualizar-esquema-2.1.0.sh)."
+  error "Falta la actualización 2.1.0. Aplíquela primero (actualizar-esquema-2.1.0.sh)."
   exit 1
 fi
 
@@ -215,7 +236,7 @@ if [ "$SOLO_INFORME" -eq 0 ] && [ "$PENDIENTES" != "0" ]; then
   fi
   if [ -n "$CONFLICTOS" ]; then
     error "Hay libros de la misma editorial con datos distintos que pasan a la editorial"
-    error "(prefijo DOI, dirección o código de país). Unificalos en los libros antes de"
+    error "(prefijo DOI, dirección o código de país). Unifíquelos en los libros antes de"
     error "actualizar. No se modificó nada."
     mysql_adm -t "$DB" -e "SELECT l.id_libro, l.titulo_libro, l.editorial, l.doi_prefix, l.direccion_editorial, l.pais_publicacion_codigo
       FROM libros_md l WHERE $(pendientes l) AND $(clave_libro l) IN (SELECT clave FROM (SELECT $(clave_libro x) AS clave FROM libros_md x
@@ -235,7 +256,7 @@ if [ "$SOLO_INFORME" -eq 0 ] && [ "$PENDIENTES" != "0" ]; then
   fi
   if [ -n "$CHOQUES" ]; then
     error "Hay libros cuyo prefijo DOI no es el de la editorial que ya existe con los"
-    error "mismos datos. Corregí el prefijo del libro o el de la editorial antes de"
+    error "mismos datos. Corrija el prefijo del libro o el de la editorial antes de"
     error "actualizar. No se modificó nada."
     mysql_adm -t "$DB" -e "SELECT l.id_libro, l.titulo_libro, l.doi_prefix AS prefijo_libro, e.id_editorial, e.nombre, e.doi_prefix AS prefijo_editorial
       FROM libros_md l JOIN editorial e ON $(clave_editorial e) = $(clave_libro l)
@@ -250,7 +271,12 @@ if [ "$SOLO_INFORME" -eq 0 ]; then
   [ "$FALTA_TABLA" = "1" ] && info "Tabla nueva: ${TABLA}"
   [ "$PENDIENTES" != "0" ] && info "Libros a vincular con su editorial: ${PENDIENTES}"
   echo
-  read -r -p "Para continuar, escribí SI en mayúsculas: " RESPUESTA
+  if [ "${GBP_SIN_PREGUNTAS:-0}" = "1" ]; then
+    # LO LLAMA EL INSTALADOR, QUE YA PIDIÓ LA CONFIRMACIÓN (SC-107)
+    RESPUESTA="SI"
+  else
+    read -r -p "Para continuar, escriba SI en mayúsculas: " RESPUESTA
+  fi
   if [ "$RESPUESTA" != "SI" ]; then
     warn "Cancelado. No se modificó nada."
     exit 0

@@ -37,9 +37,19 @@
 #
 # USO
 #   integridad.sh                        control y reparación (usuario común)
-#   integridad.sh --instalar <dir> <c>…  parte de root; la llama pkexec desde
-#                                        este mismo script. <dir> tiene las
-#                                        descargas; <c> son los componentes
+#   integridad.sh --preparar <dir>       para el instalador (SC-107): controla,
+#                                        baja a <dir> lo que falte y deja la
+#                                        lista en <dir>/componentes, SIN pedir
+#                                        contraseña. Como usuario común
+#   integridad.sh --instalar <dir> <c>…  parte de root. La llama pkexec desde
+#                                        este mismo script, o el instalador en
+#                                        su única fase de root. <dir> tiene
+#                                        las descargas; <c> son los componentes
+#
+# QUIÉN LO LLAMA
+#   GBP_LLAMADO_POR=instalador cambia lo que se le pide a la persona cuando
+#   algo falla: «vuelva a ejecutar el instalador» en lugar del menú de la
+#   aplicación, que en una instalación nueva todavía no existe.
 #
 # SALIDA (comun.sh, SC-53): 0 todo en orden; 1 algo quedó sin resolver.
 # ============================================================================
@@ -107,6 +117,13 @@ VNU_TGZ_SHA="075162071097058ddbe9d5b686366c374e8da1122460915c5516352d5ae60269"
 VNU_JAR_SHA="2e2067cb9c23705b3f7185d90e715462398f4c1b7c61756c8aab258eedb3bbb5"
 
 COMPONENTES=(saxon pandoc epubcheck verapdf packtools vnu)
+
+# QUÉ HACER PARA REINTENTAR, SEGÚN QUIÉN LLAMÓ (VER «QUIÉN LO LLAMA»)
+if [[ "${GBP_LLAMADO_POR:-}" == "instalador" ]]; then
+    REINTENTAR="vuelva a ejecutar el instalador"
+else
+    REINTENTAR="vuelva a usar «Controlar integridad del sistema»"
+fi
 
 # --- 2. CÓMO SE NOMBRA CADA UNO ANTE EL USUARIO ---
 # EN LENGUAJE DE OFICIO: QUÉ DEJA DE PODER HACERSE, NO QUÉ ARCHIVO FALTA
@@ -302,8 +319,8 @@ descargar() {
     # ESTOS USUARIOS ESO TIENE QUE LEERSE COMO «NO HAY INTERNET»
     case "$codigo" in
         0)         ;;
-        6|7|28|35) morir "No hay conexión a internet. Conectate y volvé a usar «Controlar integridad del sistema»." ;;
-        *)         morir "No se pudo bajar $nombre (curl, código $codigo). Volvé a intentar más tarde." ;;
+        6|7|28|35) morir "No hay conexión a internet. Conéctese y $REINTENTAR." ;;
+        *)         morir "No se pudo bajar $nombre (curl, código $codigo). Inténtelo más tarde: $REINTENTAR." ;;
     esac
     if [[ "$(huella "$destino")" != "$esperada" ]]; then
         morir "Lo que se bajó de $nombre no es el archivo esperado (la huella no coincide). No se instaló nada."
@@ -444,6 +461,53 @@ if [[ "${1:-}" == "--instalar" ]]; then
     modo_root "$@"
 fi
 
+# --- 3 BIS. LA PREPARACIÓN PARA EL INSTALADOR (SC-107) ---
+# CONTROL Y DESCARGAS COMO USUARIO COMÚN, SIN pkexec: EL INSTALADOR PIDE UNA
+# SOLA CONTRASEÑA PARA TODO Y LLAMA A --instalar EN SU FASE DE root. EN UNA
+# INSTALACIÓN NUEVA ESTE SCRIPT SALE DEL .deb DESCOMPRIMIDO Y TODAVÍA NO HAY
+# JAVA NI PYTHON: LOS CONTROLES FALLAN Y SE BAJA TODO, QUE ES LO QUE
+# CORRESPONDE. POR ESO ACÁ SOLO SE EXIGE LO QUE USAN LAS DESCARGAS
+if [[ "${1:-}" == "--preparar" ]]; then
+    [[ -n "${2:-}" ]] || morir "Uso: $(basename "$0") --preparar <carpeta>"
+    TRABAJO="$2"
+    mkdir -p "$TRABAJO" || morir "No se pudo crear la carpeta $TRABAJO"
+    for comando in curl sha256sum timeout; do
+        command -v "$comando" >/dev/null 2>&1 || morir "Falta el programa «$comando»."
+    done
+    # LAS PRUEBAS SE BORRAN AL SALIR; LAS DESCARGAS QUEDAN PARA --instalar.
+    # UNA DESCARGA YA HECHA Y CON SU HUELLA NO SE REPITE: SI SE CORTA, LA
+    # PRÓXIMA CORRIDA DEL INSTALADOR RETOMA
+    PRUEBAS="$(mktemp -d /tmp/gbp-integridad.XXXXXX)" || morir "No se pudo crear una carpeta temporal"
+    trap 'rm -rf -- "$PRUEBAS"' EXIT
+    encabezado "Integridad del sistema: preparación"
+    paso "Herramientas de producción"
+    controlar_todo 2>/dev/null
+    paso "Descargas"
+    : > "$TRABAJO/componentes"
+    for c in "${FALTAN[@]}"; do
+        case "$c" in
+            saxon)     archivo="saxon.zip";      url="$SAXON_URL";     sha="$SAXON_ZIP_SHA";     nom="Saxon-HE 12.9" ;;
+            pandoc)    archivo="pandoc.tar.gz";  url="$PANDOC_URL";    sha="$PANDOC_TGZ_SHA";    nom="pandoc 3.1.3" ;;
+            epubcheck) archivo="epubcheck.zip";  url="$EPUBCHECK_URL"; sha="$EPUBCHECK_ZIP_SHA"; nom="epubcheck 4.2.6" ;;
+            verapdf)   archivo="verapdf.zip";    url="$VERAPDF_URL";   sha="$VERAPDF_ZIP_SHA";   nom="veraPDF 1.30.1" ;;
+            vnu)       archivo="vnu.tgz";        url="$VNU_URL";       sha="$VNU_TGZ_SHA";       nom="vnu 26.7.3" ;;
+            packtools) archivo="" ;;
+        esac
+        if [[ -n "$archivo" ]]; then
+            if [[ "$(huella "$TRABAJO/$archivo")" == "$sha" ]]; then
+                ok "$nom ya estaba bajado y verificado"
+            else
+                descargar "$url" "$TRABAJO/$archivo" "$sha" "$nom"
+            fi
+        else
+            tenue "packtools se baja durante la instalación (GitHub y PyPI)"
+        fi
+        echo "$c" >> "$TRABAJO/componentes"
+    done
+    (( ${#FALTAN[@]} == 0 )) && ok "No hay nada que instalar."
+    terminar
+fi
+
 encabezado "Integridad del sistema"
 
 # --- 4. LO QUE ESTE SCRIPT NECESITA PARA TRABAJAR ---
@@ -455,7 +519,7 @@ for comando in java curl unzip tar sha256sum timeout pkexec python3; do
     command -v "$comando" >/dev/null 2>&1 || faltan_base+=("$comando")
 done
 if (( ${#faltan_base[@]} > 0 )); then
-    morir "Faltan herramientas que instala gbpublisher: ${faltan_base[*]}. Reinstalá el paquete .deb de gbpublisher."
+    morir "Faltan herramientas que instala gbpublisher: ${faltan_base[*]}. Reinstale el paquete .deb de gbpublisher."
 fi
 ok "Java, curl, unzip y Python presentes"
 
@@ -491,13 +555,13 @@ done
 # --- 7. INSTALACIÓN: UNA SOLA VENTANA DE CONTRASEÑA ---
 paso "Instalación"
 echo
-printf '  %s➜ Se abre una ventana que pide tu contraseña. Escribila y aceptá.%s\n' "$C_AVISO" "$C_RESET"
+printf '  %s➜ Se abre una ventana que pide su contraseña. Escríbala y acepte.%s\n' "$C_AVISO" "$C_RESET"
 echo
 pkexec /bin/bash "$DIR_ENGINE/integridad.sh" --instalar "$TRABAJO" "${FALTAN[@]}"
 codigo=$?
 case "$codigo" in
     0)   ;;
-    126) morir "Se cerró la ventana de la contraseña: no se instaló nada. Cuando quieras, volvé a usar «Controlar integridad del sistema»." ;;
+    126) morir "Se cerró la ventana de la contraseña: no se instaló nada. Cuando quiera, $REINTENTAR." ;;
     127) morir "No se obtuvo permiso de administrador: no se instaló nada. La contraseña tiene que ser la de un usuario administrador de esta computadora." ;;
     *)   morir "La instalación no terminó (código $codigo). El motivo está más arriba." ;;
 esac
@@ -506,7 +570,7 @@ esac
 paso "Control final"
 controlar_todo
 if (( ${#FALTAN[@]} > 0 )); then
-    morir "Quedaron herramientas sin resolver. Copiá lo que muestra la terminal y enviáselo a quien te da soporte."
+    morir "Quedaron herramientas sin resolver. Copie lo que muestra la terminal y envíeselo a quien le da soporte."
 fi
 echo
 ok "Todo en orden: las herramientas de producción quedaron instaladas."

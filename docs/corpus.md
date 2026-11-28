@@ -1378,7 +1378,21 @@ LIBROS: LA EDITORIAL Y CROSSREF (25/11/2026)
 
 La 2.4.0 frena si una VIEW usa una columna a borrar o si una colección tiene prefijo cargado. Informa, sin frenar, los libros sin editorial que tenían datos viejos y las consultas guardadas (tabla `consultas`, columna `editor_consultas`) que nombran columnas borradas. Las FK que usan una columna se borran en el mismo `ALTER` que la columna: si no, MySQL da 1828 (GV-224). La cuenta de columnas de `ValidarEsquemaBD` es exacta: el script y la aplicación nueva se instalan juntos, en todos los puestos.
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90,vinculo:SC-102,vinculo:GV-217,vinculo:SC-104,vinculo:SC-108,apoya:GV-224
+DÓNDE QUEDAN LOS RESPALDOS (CORRECCIÓN, 27/11/2026)
+
+La documentación decía `~/gbpublisher-respaldos/`, pero los scripts usaban `${HOME}`, y con `sudo` es `/root` (GV-235): los respaldos quedaban en `/root/gbpublisher-respaldos/`, de root. Corregido en los 39 scripts que hacen respaldo (la 1.34.0 no lo hace):
+
+- La carpeta es la de `SUDO_USER` o, con pkexec, la de `PKEXEC_UID`, leída con `getent passwd`. Sin ninguna de las dos (root directo), sigue siendo `${HOME}`.
+- `GBP_DIR_RESPALDOS` la reemplaza: la fija quien llama.
+- Al salir, por donde sea (`trap … EXIT`), la carpeta y los respaldos pasan a ser del usuario.
+
+Probado en el contenedor como usuario con sudo: la cadena 2.1.0 a 2.5.0 sobre `baseline-2.0.0` y la 2.0.0 sobre una base 1.34.0 dejan sus respaldos en la carpeta del usuario y a su nombre.
+
+SIN PREGUNTAS (2.0.0 EN ADELANTE)
+
+Con `GBP_SIN_PREGUNTAS=1`, los scripts 2.x no piden escribir `SI`: la confirmación ya la pidió quien los llama (el instalador, SC-107). Sin la variable preguntan como siempre. Los mensajes de esos seis scripts pasan a español neutro, con usted. Probado: la cadena completa sin entrada (`</dev/null`), y la pregunta con «no» (cancela) y con «SI» (aplica).
+
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90,vinculo:SC-102,vinculo:GV-217,vinculo:SC-104,vinculo:SC-108,apoya:GV-224,apoya:GV-235,vinculo:SC-107
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -6273,14 +6287,32 @@ LA PRESENTACIÓN (decisiones de Alberto, 27/11/2026)
 
 EL README. `README.md` y `README.en.md` abren, después del selector de idioma, con una alerta de GitHub `> [!IMPORTANT]` que pide leer `LEER-INSTALADOR.md` antes de instalar. Se eligió que esté arriba porque la mayoría llega al repositorio sabiendo que va a instalar. GitHub no permite un fondo de color en un README (quita los estilos). La alerta da un recuadro con borde de color e ícono, y su título lo pone GitHub en inglés. Se descartó una imagen SVG con fondo: el texto no se selecciona y hay que hacer una por idioma. Los dos README suman además una sección «Instalación» y apuntan a `LEER-INSTALADOR.md` en lugar de `LEEME.md`.
 
-**Relaciones:** vinculo:SC-95,vinculo:SC-106,vinculo:SC-22,vinculo:GV-206,vinculo:GV-209,vinculo:SC-81,vinculo:GV-234
+LO QUE SE ACORDÓ DESPUÉS (Alberto, 27/11/2026)
+
+1. **El paquete de la base:** `gbpublisher-base-X.Y.Z.tar.gz`, archivo de la release. Lleva el baseline, todos los `actualizar-esquema-*.sh`, `configurar-conexion.sh` y `limpiar-gbpublisher-local.sh`. Su huella va escrita en el instalador.
+2. **`LEER-INSTALADOR.md` no lleva marcas de versión.** Corrige lo de act-143: sin `@VERSION@`. Vale para todas las versiones; la línea para pegar va en las notas de la release, que genera `publicar.sh`. La única marca que queda es `@ENLACE_ARTICULO_GITHUB@`, que se completa a mano una vez, cuando exista el artículo.
+3. **El esquema que exige cada release** es el `actualizar-esquema-*.sh` más alto en el momento de publicar (hoy 2.5.0).
+4. **`publicar.sh` pasa al repositorio** y lee el `.deb` de `~/Dropbox/ubuntu`. La plantilla del instalador también vive en el repositorio (por ejemplo, `distribucion/instalador.sh.in`).
+5. **`publicar.sh` controla** que el repositorio esté limpio y empujado antes de crear la etiqueta.
+
+a. **El instalador actualiza solo bases en 2.0.0 o posterior.** Una base 1.x frena con un mensaje: se lleva a la 2.0.0 a mano (`BBDD_LEEME.md` §5). Por eso solo los seis scripts 2.x tienen el modo sin preguntas (SC-22).
+
+b. **Sin respaldo propio del instalador.** Corrige «un solo respaldo» de LO QUE HACE, punto 6: cada script de esquema hace el suyo, como siempre, en la carpeta de quien instala (GV-235). El instalador fija `GBP_DIR_RESPALDOS` para que no dependa de cómo lo lanzó pkexec.
+
+LAS PIEZAS QUE YA ESTÁN (27/11/2026)
+
+- **`integridad.sh --preparar <carpeta>`:** como usuario común, controla, baja a la carpeta lo que falta con su huella y deja la lista en `<carpeta>/componentes`. No pide contraseña. La fase de root del instalador llama después a `integridad.sh --instalar <carpeta> $(cat <carpeta>/componentes)`. Una descarga que ya está con su huella no se repite: una corrida cortada retoma. Probado en el contenedor: preparar, repetir (no baja nada) e instalar como root Saxon, pandoc, epubcheck y veraPDF. packtools no se pudo probar ahí: el proxy del contenedor rechaza la descarga de GitHub (403).
+- **`GBP_LLAMADO_POR=instalador`:** cambia el pedido ante un error a «vuelva a ejecutar el instalador», en lugar del menú de la aplicación.
+- **En una instalación nueva**, `integridad.sh` se toma del `.deb` ya descargado, con `dpkg-deb -x` y sin root: todavía no hay aplicación instalada.
+- **Español neutro:** `integridad.sh`, `instalar_packtools.sh`, `configurar-conexion.sh`, `limpiar-gbpublisher-local.sh` y los seis scripts 2.x.
+
+**Relaciones:** vinculo:SC-95,vinculo:SC-106,vinculo:SC-22,vinculo:GV-206,vinculo:GV-209,vinculo:SC-81,vinculo:GV-234,apoya:GV-235
 
 **PENDIENTE:** Implementar, en este orden:
-1. La plantilla del instalador y su generador (versión y huella del .deb; también reemplaza @VERSION@ y @ENLACE_ARTICULO_GITHUB@ en LEER-INSTALADOR.md y frena si queda alguna).
-2. engine/integridad.sh sin proyecto abierto.
-3. El modo no interactivo de los scripts de esquema, y su paso a español neutro junto con configurar-conexion.sh.
-4. El formulario de issues.
-5. El artículo del blog sobre la cuenta de GitHub (su enlace va en LEER-INSTALADOR.md).
+1. publicar.sh en el repositorio, con la plantilla del instalador y su generador: versión y huellas del .deb y del paquete de la base, el esquema exigido, las notas de la release con la línea para pegar, y el control de repositorio limpio y empujado.
+2. El instalador: verificar en el .deb la ruta de engine/integridad.sh para dpkg-deb -x.
+3. El formulario de issues.
+4. El artículo del blog sobre la cuenta de GitHub; su enlace reemplaza @ENLACE_ARTICULO_GITHUB@ en LEER-INSTALADOR.md.
 
 Después: la tanda de Mint 23 y el modo compartido (Eduvim).
 
@@ -11882,6 +11914,42 @@ DESDE EL IDE (confirmado por Alberto el 27/11/2026). La misma prueba lanzada des
 DESPUÉS DE ASIGNAR, `LC_ALL` QUEDA ESCRITO. Volver a asignar el valor original deja los mismos formatos, pero `LC_ALL` ya no está vacío (`es_AR.UTF-8` en el bloque 4): desde ahí, el proceso y sus hijos ignoran un `LC_NUMERIC` distinto que trajera la sesión.
 
 **Relaciones:** vinculo:GV-03,vinculo:GV-96,vinculo:GV-150,vinculo:GV-204,vinculo:SC-112
+
+### GV-235 — Con sudo, HOME es /root: lo que un script escribe en «~» queda en la carpeta de root. Quién pidió el permiso se lee de SUDO_USER (sudo) o PKEXEC_UID (pkexec)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Linux Mint 22 (Ubuntu 24.04), sudo 1.9.15 por omisión, bash 5.2 (Mint de Alberto, 27/11/2026); contenedor Ubuntu 24.04; pkexec por su página de manual · **Verificado:** 2026-11
+
+Medido el 27/11/2026 en el Mint 22 de Alberto y en el contenedor (Ubuntu 24.04).
+
+EL HECHO
+
+En Mint 22, `sudo` arranca el comando con `HOME=/root` (política por omisión de Ubuntu). Un script que se corre con `sudo bash script.sh` y escribe en `${HOME}/…` escribe en `/root/…`, no en la carpeta de quien lo lanzó. Así quedaron en `/root/gbpublisher-respaldos/` los respaldos de los scripts de esquema de Alberto (SC-22), con dueño root, aunque `BBDD_LEEME.md` y `LEEME.md` decían `~/gbpublisher-respaldos/`.
+
+QUIÉN PIDIÓ EL PERMISO
+
+- `sudo` deja `SUDO_USER` con el nombre de quien lo lanzó (medido).
+- `pkexec` no deja `SUDO_USER`: deja `PKEXEC_UID` con el número de usuario (página de manual de pkexec; simulado en el contenedor, no medido con pkexec en Mint).
+- La carpeta personal se toma de `getent passwd <usuario>`, no de `~usuario` ni de `HOME`.
+
+EL ENTORNO SE LIMPIA
+
+`sudo` borra las variables propias (`env_reset`). Una variable que el llamador quiere pasar va en la misma línea: `sudo GBP_DIR_RESPALDOS=/ruta bash script.sh` (medido en el contenedor).
+
+LA PROPIEDAD
+
+Lo que crea un proceso de root queda de root, aunque esté en la carpeta del usuario: después no lo puede abrir ni borrar sin `sudo`. Hay que devolverle la propiedad (`chown -R usuario:`) al terminar. Con `trap … EXIT` se hace también cuando el script sale por un error o por `set -e`, y se conserva su código de salida (medido: una salida 5 sigue siendo 5).
+
+UN COMODÍN DENTRO DE /root
+
+`sudo mv /root/carpeta/* destino/` falla: el comodín lo expande el shell del usuario, que no puede leer `/root`, y `mv` recibe el `*` literal. Se escribe `sudo bash -c 'mv /root/carpeta/* destino/'`, para que lo expanda el shell de root (medido por Alberto, 27/11).
+
+CONSECUENCIA PARA EL PROYECTO
+
+Todo script que se corre con `sudo` o `pkexec` y escribe para la persona (respaldos, registros) calcula la carpeta desde `SUDO_USER` o `PKEXEC_UID`, y al salir devuelve la propiedad. Los scripts de esquema lo hacen desde esta entrada (SC-22).
+
+**Relaciones:** vinculo:SC-22,vinculo:SC-107,vinculo:GV-206
+
+**PENDIENTE:** Medir con pkexec real en Mint que PKEXEC_UID llega y SUDO_USER no: será en la primera prueba del instalador.
 
 ---
 

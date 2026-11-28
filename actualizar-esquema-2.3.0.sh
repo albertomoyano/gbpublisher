@@ -36,7 +36,28 @@ DB="gbpublisher"
 PARCHE="actualizacion-2.3.0"
 PREVIO="actualizacion-2.2.0"
 DESCRIPCION="libros_md.crossref_fecha_deposito: fecha del depósito en Crossref, la marca la persona"
-DIR_RESPALDO="${HOME}/gbpublisher-respaldos"
+# EL RESPALDO VA A LA CARPETA DEL USUARIO QUE PIDIÓ EL PERMISO, NO A LA DE
+# root: CON sudo, HOME ES /root (GV-235, MEDIDO EN MINT 22). sudo DEJA
+# SUDO_USER Y pkexec DEJA PKEXEC_UID. GBP_DIR_RESPALDOS LO FIJA QUIEN LLAMA
+USUARIO_RESPALDO="${SUDO_USER:-}"
+if [ -z "$USUARIO_RESPALDO" ] && [ -n "${PKEXEC_UID:-}" ]; then
+  USUARIO_RESPALDO="$(id -nu "$PKEXEC_UID" 2>/dev/null || true)"
+fi
+HOME_RESPALDO="$HOME"
+if [ -n "$USUARIO_RESPALDO" ]; then
+  HOME_RESPALDO="$(getent passwd "$USUARIO_RESPALDO" | cut -d: -f6 || true)"
+  [ -n "$HOME_RESPALDO" ] || HOME_RESPALDO="$HOME"
+fi
+DIR_RESPALDO="${GBP_DIR_RESPALDOS:-${HOME_RESPALDO}/gbpublisher-respaldos}"
+
+# AL SALIR, POR DONDE SEA, LA CARPETA Y LOS RESPALDOS QUEDAN A NOMBRE DE ESE
+# USUARIO: SIN ESTO SERÍAN DE root Y NO LOS PODRÍA ABRIR NI BORRAR
+entregar_respaldos() {
+  if [ -n "$USUARIO_RESPALDO" ] && [ "$(id -u)" -eq 0 ] && [ -d "$DIR_RESPALDO" ]; then
+    chown -R "${USUARIO_RESPALDO}:" "$DIR_RESPALDO" 2>/dev/null || true
+  fi
+}
+trap entregar_respaldos EXIT
 TABLA="libros_md"
 COLUMNA="crossref_fecha_deposito"
 DEFINICION="DATE NULL DEFAULT NULL COMMENT 'Depósito en Crossref: lo marca la persona después de subir el XML; NULL = sin depositar'"
@@ -107,7 +128,7 @@ if [ "$(existe_tabla esquema_version)" != "1" ]; then
 fi
 
 if [ "$(valor "SELECT COUNT(*) FROM \`${DB}\`.esquema_version WHERE parche='${PREVIO}';")" = "0" ]; then
-  error "Falta la 2.2.0. Aplicá primero actualizar-esquema-2.2.0.sh."
+  error "Falta la 2.2.0. Aplique primero actualizar-esquema-2.2.0.sh."
   exit 1
 fi
 
@@ -127,7 +148,12 @@ else
 
   # --- 4. CONFIRMACIÓN ---
   echo
-  read -r -p "Para continuar, escribí SI en mayúsculas: " RESPUESTA
+  if [ "${GBP_SIN_PREGUNTAS:-0}" = "1" ]; then
+    # LO LLAMA EL INSTALADOR, QUE YA PIDIÓ LA CONFIRMACIÓN (SC-107)
+    RESPUESTA="SI"
+  else
+    read -r -p "Para continuar, escriba SI en mayúsculas: " RESPUESTA
+  fi
   if [ "$RESPUESTA" != "SI" ]; then
     warn "Cancelado. No se modificó nada."
     exit 0

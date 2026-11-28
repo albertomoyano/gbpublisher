@@ -27,7 +27,28 @@ set -euo pipefail
 DB="gbpublisher"
 PARCHE="actualizacion-1.6.0"
 DESCRIPCION="Autoría en la apertura de capítulo: forma de los nombres en capitulos"
-DIR_RESPALDO="${HOME}/gbpublisher-respaldos"
+# EL RESPALDO VA A LA CARPETA DEL USUARIO QUE PIDIÓ EL PERMISO, NO A LA DE
+# root: CON sudo, HOME ES /root (GV-235, MEDIDO EN MINT 22). sudo DEJA
+# SUDO_USER Y pkexec DEJA PKEXEC_UID. GBP_DIR_RESPALDOS LO FIJA QUIEN LLAMA
+USUARIO_RESPALDO="${SUDO_USER:-}"
+if [ -z "$USUARIO_RESPALDO" ] && [ -n "${PKEXEC_UID:-}" ]; then
+  USUARIO_RESPALDO="$(id -nu "$PKEXEC_UID" 2>/dev/null || true)"
+fi
+HOME_RESPALDO="$HOME"
+if [ -n "$USUARIO_RESPALDO" ]; then
+  HOME_RESPALDO="$(getent passwd "$USUARIO_RESPALDO" | cut -d: -f6 || true)"
+  [ -n "$HOME_RESPALDO" ] || HOME_RESPALDO="$HOME"
+fi
+DIR_RESPALDO="${GBP_DIR_RESPALDOS:-${HOME_RESPALDO}/gbpublisher-respaldos}"
+
+# AL SALIR, POR DONDE SEA, LA CARPETA Y LOS RESPALDOS QUEDAN A NOMBRE DE ESE
+# USUARIO: SIN ESTO SERÍAN DE root Y NO LOS PODRÍA ABRIR NI BORRAR
+entregar_respaldos() {
+  if [ -n "$USUARIO_RESPALDO" ] && [ "$(id -u)" -eq 0 ] && [ -d "$DIR_RESPALDO" ]; then
+    chown -R "${USUARIO_RESPALDO}:" "$DIR_RESPALDO" 2>/dev/null || true
+  fi
+}
+trap entregar_respaldos EXIT
 TABLA="capitulos"
 COLUMNA="autoria_apertura"
 DEFINICION="VARCHAR(500) COLLATE utf8mb4_unicode_ci NULL COMMENT 'Forma de los nombres en la apertura del capítulo, separados por punto y coma; vacía: nombres completos'"

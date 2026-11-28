@@ -77,7 +77,7 @@ if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 
     morir "packtools ${VERSION} pide Python 3.11 o más; este sistema tiene $(python3 -V 2>&1)."
 fi
 if ! python3 -c 'import ensurepip, venv' 2>/dev/null; then
-    morir "Falta el módulo venv de Python (paquete python3-venv). Reinstalá gbpublisher: es una de sus dependencias."
+    morir "Falta el módulo venv de Python (paquete python3-venv). Reinstale gbpublisher: es una de sus dependencias."
 fi
 ok "$(python3 -V)"
 

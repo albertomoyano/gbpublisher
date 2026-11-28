@@ -41,7 +41,28 @@ DB="gbpublisher"
 PARCHE="actualizacion-2.4.0"
 PREVIO="actualizacion-2.3.0"
 DESCRIPCION="Borra las columnas viejas de editorial de libros_md, colecciones.doi_prefix y capitulos.crossref_*; limpia email_editorial repetido"
-DIR_RESPALDO="${HOME}/gbpublisher-respaldos"
+# EL RESPALDO VA A LA CARPETA DEL USUARIO QUE PIDIÓ EL PERMISO, NO A LA DE
+# root: CON sudo, HOME ES /root (GV-235, MEDIDO EN MINT 22). sudo DEJA
+# SUDO_USER Y pkexec DEJA PKEXEC_UID. GBP_DIR_RESPALDOS LO FIJA QUIEN LLAMA
+USUARIO_RESPALDO="${SUDO_USER:-}"
+if [ -z "$USUARIO_RESPALDO" ] && [ -n "${PKEXEC_UID:-}" ]; then
+  USUARIO_RESPALDO="$(id -nu "$PKEXEC_UID" 2>/dev/null || true)"
+fi
+HOME_RESPALDO="$HOME"
+if [ -n "$USUARIO_RESPALDO" ]; then
+  HOME_RESPALDO="$(getent passwd "$USUARIO_RESPALDO" | cut -d: -f6 || true)"
+  [ -n "$HOME_RESPALDO" ] || HOME_RESPALDO="$HOME"
+fi
+DIR_RESPALDO="${GBP_DIR_RESPALDOS:-${HOME_RESPALDO}/gbpublisher-respaldos}"
+
+# AL SALIR, POR DONDE SEA, LA CARPETA Y LOS RESPALDOS QUEDAN A NOMBRE DE ESE
+# USUARIO: SIN ESTO SERÍAN DE root Y NO LOS PODRÍA ABRIR NI BORRAR
+entregar_respaldos() {
+  if [ -n "$USUARIO_RESPALDO" ] && [ "$(id -u)" -eq 0 ] && [ -d "$DIR_RESPALDO" ]; then
+    chown -R "${USUARIO_RESPALDO}:" "$DIR_RESPALDO" 2>/dev/null || true
+  fi
+}
+trap entregar_respaldos EXIT
 # TABLA:COLUMNA, EN EL ORDEN EN QUE SE BORRAN
 COLUMNAS=(
   libros_md:editorial libros_md:institucion_editora libros_md:ror_editorial
@@ -120,7 +141,7 @@ if [ "$(existe_tabla esquema_version)" != "1" ]; then
 fi
 
 if [ "$(valor "SELECT COUNT(*) FROM \`${DB}\`.esquema_version WHERE parche='${PREVIO}';")" = "0" ]; then
-  error "Falta la 2.3.0. Aplicá primero actualizar-esquema-2.3.0.sh."
+  error "Falta la 2.3.0. Aplique primero actualizar-esquema-2.3.0.sh."
   exit 1
 fi
 
@@ -153,7 +174,7 @@ else
   if [ "$(existe_columna colecciones doi_prefix)" = "1" ]; then
     CON_PREFIJO="$(valor "SELECT COUNT(*) FROM \`${DB}\`.colecciones WHERE NULLIF(TRIM(doi_prefix), '') IS NOT NULL;")"
     if [ "$CON_PREFIJO" != "0" ]; then
-      error "Hay ${CON_PREFIJO} colección(es) con prefijo DOI. Cargalo en su editorial (gbpublisher admin) y vaciá el de la colección:"
+      error "Hay ${CON_PREFIJO} colección(es) con prefijo DOI. Cárguelo en su editorial (gbpublisher admin) y vacíe el de la colección:"
       mysql_adm -t "$DB" -e "SELECT id_coleccion, nombre, doi_prefix FROM colecciones WHERE NULLIF(TRIM(doi_prefix), '') IS NOT NULL;"
       FRENO=1
     fi
@@ -190,7 +211,7 @@ else
     PATRON="institucion_editora|ror_editorial|ciudad_publicacion|pais_publicacion|direccion_editorial|doi_prefix|crossref_estado|crossref_fecha_deposito|libros_md\\.editorial|l\\.editorial"
     N_CONSULTAS="$(valor "SELECT COUNT(*) FROM \`${DB}\`.consultas WHERE editor_consultas REGEXP '${PATRON}';")"
     if [ "$N_CONSULTAS" != "0" ]; then
-      warn "${N_CONSULTAS} consulta(s) guardada(s) nombran columnas que se borran. Revisalas en Estadísticas:"
+      warn "${N_CONSULTAS} consulta(s) guardada(s) nombran columnas que se borran. Revíselas en Estadísticas:"
       mysql_adm -t "$DB" -e "SELECT id, nombre FROM consultas WHERE editor_consultas REGEXP '${PATRON}';"
     else
       ok "Ninguna consulta guardada nombra las columnas que se borran."
@@ -199,7 +220,12 @@ else
 
   # --- 6. CONFIRMACIÓN ---
   echo
-  read -r -p "Para continuar, escribí SI en mayúsculas: " RESPUESTA
+  if [ "${GBP_SIN_PREGUNTAS:-0}" = "1" ]; then
+    # LO LLAMA EL INSTALADOR, QUE YA PIDIÓ LA CONFIRMACIÓN (SC-107)
+    RESPUESTA="SI"
+  else
+    read -r -p "Para continuar, escriba SI en mayúsculas: " RESPUESTA
+  fi
   if [ "$RESPUESTA" != "SI" ]; then
     warn "Cancelado. No se modificó nada."
     exit 0
@@ -315,4 +341,4 @@ if [ "$(valor "SELECT COUNT(*) FROM \`${DB}\`.esquema_version WHERE parche='${PA
 fi
 
 echo
-ok "${NEGRITA}Actualización 2.4.0 lista. Instalá ahora la aplicación nueva.${RESET}"
+ok "${NEGRITA}Actualización 2.4.0 lista. Instale ahora la aplicación nueva.${RESET}"

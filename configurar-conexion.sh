@@ -134,8 +134,8 @@ abre_sesion() {
 # --- 1. COMO USUARIO COMÚN, NO COMO ROOT ---
 # EL ARCHIVO ES DEL USUARIO QUE VA A USAR gbpublisher Y VA A SU CARPETA
 if [ "$(id -u)" -eq 0 ]; then
-  error "Este script se corre SIN sudo: el archivo de conexión es de tu usuario."
-  error "Ejecutá:  bash configurar-conexion.sh"
+  error "Este script se corre SIN sudo: el archivo de conexión es de su usuario."
+  error "Ejecute:  bash configurar-conexion.sh"
   exit 1
 fi
 
@@ -194,9 +194,9 @@ printf '%s\n' "$CLAVE" > "$TEMPORAL"
 
 echo
 if [ "$ELEVAR" = "pkexec" ]; then
-  printf '  %s➜ Se abre una ventana que pide tu contraseña. Escribila y aceptá.%s\n' "$AMBAR" "$RESET"
+  printf '  %s➜ Se abre una ventana que pide su contraseña. Escríbala y acepte.%s\n' "$AMBAR" "$RESET"
 else
-  info "Se pide tu contraseña de administrador (sudo)."
+  info "Se pide su contraseña de administrador (sudo)."
 fi
 echo
 "$ELEVAR" /bin/bash "$SCRIPT" --root "$TEMPORAL"
@@ -217,7 +217,7 @@ mkdir -p "$DIR_CONF"
 NUEVO="$(umask 077 && mktemp "${DIR_CONF}/conexion.conf.XXXXXX")"
 {
   echo "# gbpublisher: credencial de la base de datos (configurar-conexion.sh)."
-  echo "# Archivo de opciones de MySQL. No lo compartas: tiene la contraseña."
+  echo "# Archivo de opciones de MySQL. No lo comparta: tiene la contraseña."
   echo "[client]"
   echo "user=${DB_USER}"
   echo "password=${CLAVE}"
@@ -228,19 +228,19 @@ NUEVO="$(umask 077 && mktemp "${DIR_CONF}/conexion.conf.XXXXXX")"
 } > "$NUEVO"
 chmod 600 "$NUEVO"
 mv -f "$NUEVO" "$CONF"
-ok "Archivo de conexión escrito: ${CONF} (solo lo lee tu usuario)."
+ok "Archivo de conexión escrito: ${CONF} (solo lo lee su usuario)."
 
 # --- 6. VERIFICACIÓN CON EL ARCHIVO ---
 if abre_sesion "$CONF"; then
   ok "La conexión con la base funciona."
 else
   error "El archivo quedó escrito, pero no abre una sesión en la base."
-  error "Copiá lo que muestra esta ventana y enviáselo a quien te da soporte."
+  error "Copie lo que muestra esta ventana y envíeselo a quien le da soporte."
   exit 1
 fi
 
 echo
-echo "${VERDE}${NEGRITA}Listo.${RESET} Ya podés abrir gbpublisher."
+echo "${VERDE}${NEGRITA}Listo.${RESET} Ya puede abrir gbpublisher."
 if [ "$HAY_RED" -eq 1 ]; then
   warn "Esta base tiene cuentas para otras máquinas: cada una necesita una copia"
   warn "de este archivo, con host = la IP de esta computadora (ver BBDD_LEEME.md §6)."

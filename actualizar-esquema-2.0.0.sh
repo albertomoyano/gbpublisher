@@ -53,7 +53,28 @@ DB="gbpublisher"
 PARCHE="actualizacion-2.0.0"
 PREVIO="actualizacion-1.34.0"
 DESCRIPCION="Bibliografía en entrada y pares campo/valor: bibtex, bibtex_campo y bibtex_campo_catalogo"
-DIR_RESPALDO="${HOME}/gbpublisher-respaldos"
+# EL RESPALDO VA A LA CARPETA DEL USUARIO QUE PIDIÓ EL PERMISO, NO A LA DE
+# root: CON sudo, HOME ES /root (GV-235, MEDIDO EN MINT 22). sudo DEJA
+# SUDO_USER Y pkexec DEJA PKEXEC_UID. GBP_DIR_RESPALDOS LO FIJA QUIEN LLAMA
+USUARIO_RESPALDO="${SUDO_USER:-}"
+if [ -z "$USUARIO_RESPALDO" ] && [ -n "${PKEXEC_UID:-}" ]; then
+  USUARIO_RESPALDO="$(id -nu "$PKEXEC_UID" 2>/dev/null || true)"
+fi
+HOME_RESPALDO="$HOME"
+if [ -n "$USUARIO_RESPALDO" ]; then
+  HOME_RESPALDO="$(getent passwd "$USUARIO_RESPALDO" | cut -d: -f6 || true)"
+  [ -n "$HOME_RESPALDO" ] || HOME_RESPALDO="$HOME"
+fi
+DIR_RESPALDO="${GBP_DIR_RESPALDOS:-${HOME_RESPALDO}/gbpublisher-respaldos}"
+
+# AL SALIR, POR DONDE SEA, LA CARPETA Y LOS RESPALDOS QUEDAN A NOMBRE DE ESE
+# USUARIO: SIN ESTO SERÍAN DE root Y NO LOS PODRÍA ABRIR NI BORRAR
+entregar_respaldos() {
+  if [ -n "$USUARIO_RESPALDO" ] && [ "$(id -u)" -eq 0 ] && [ -d "$DIR_RESPALDO" ]; then
+    chown -R "${USUARIO_RESPALDO}:" "$DIR_RESPALDO" 2>/dev/null || true
+  fi
+}
+trap entregar_respaldos EXIT
 
 # LAS COLUMNAS QUE QUEDAN EN bibtex. EL RESTO SE VA
 QUEDAN_SQL="'id','id_proyecto','tipo_de_entrada','clave_bibtex','id_origen','fecha_modificacion'"
@@ -302,7 +323,7 @@ fi
 
 # LA CADENA ES ORDENADA: 2.0.0 VA SOBRE 1.34.0
 if [ "$(valor "SELECT COUNT(*) FROM \`${DB}\`.esquema_version WHERE parche='${PREVIO}';")" != "1" ]; then
-  error "Falta la actualización 1.34.0. Aplicala primero (actualizar-esquema-1.34.0.sh)."
+  error "Falta la actualización 1.34.0. Aplíquela primero (actualizar-esquema-1.34.0.sh)."
   exit 1
 fi
 
@@ -410,7 +431,12 @@ if [ "$SOLO_INFORME" -eq 0 ]; then
   echo
   warn "Esta actualización borra columnas. Se vuelve atrás solo restaurando el respaldo completo."
   warn "Se aplica DESPUÉS de instalar la aplicación nueva: la anterior no arranca sin las columnas viejas."
-  read -r -p "Para continuar, escribí SI en mayúsculas: " RESPUESTA
+  if [ "${GBP_SIN_PREGUNTAS:-0}" = "1" ]; then
+    # LO LLAMA EL INSTALADOR, QUE YA PIDIÓ LA CONFIRMACIÓN (SC-107)
+    RESPUESTA="SI"
+  else
+    read -r -p "Para continuar, escriba SI en mayúsculas: " RESPUESTA
+  fi
   if [ "$RESPUESTA" != "SI" ]; then
     warn "Cancelado. No se modificó nada."
     exit 0

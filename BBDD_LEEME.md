@@ -327,7 +327,19 @@ SELECT parche, aplicado_en FROM esquema_version ORDER BY aplicado_en;
 ```
 
 Se corren con `sudo bash actualizar-esquema-X.Y.Z.sh`. Los respaldos quedan
-en `~/gbpublisher-respaldos/`. Las actualizaciones que borran tablas o datos
+en `~/gbpublisher-respaldos/` de quien corre el script, y a su nombre: con
+`sudo`, `HOME` es `/root` (GV-235), así que cada script toma la carpeta
+personal de `SUDO_USER` (o de `PKEXEC_UID`, si lo lanza pkexec) y al
+terminar le devuelve la propiedad de la carpeta. Las versiones anteriores a
+esa corrección dejaban los respaldos en `/root/gbpublisher-respaldos/`.
+Quien los llama puede fijar otra carpeta con la variable
+`GBP_DIR_RESPALDOS`.
+
+Los scripts 2.0.0 en adelante aceptan además `GBP_SIN_PREGUNTAS=1`: no piden
+escribir `SI`, porque la confirmación ya la pidió quien los llama. Es la
+forma en que los corre el instalador (`instalador.sh`, SC-107), que
+actualiza solo bases en 2.0.0 o posterior. Una base anterior se lleva a la
+2.0.0 a mano, con la cadena de arriba, antes de usar el instalador. Las actualizaciones que borran tablas o datos
 (1.32.0, 1.33.0) no se deshacen con un parche: se vuelve atrás restaurando el
 respaldo que hicieron antes de empezar, y cada una muestra el comando.
 
