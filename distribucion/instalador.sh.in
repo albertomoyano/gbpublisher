@@ -184,7 +184,8 @@ linea_final() {
 #             muestra el tiempo y una barra de «=» que va y viene (idea de
 #             Alberto, SC-107). La barra no mide cuánto falta: solo muestra
 #             que la computadora sigue trabajando. Sin terminal no anima.
-# Parámetros: $1 — número de paso; $2 — título; $3… — función y argumentos
+# Parámetros: $1 — número de paso; $2 — título; $3… — una función de la
+#             lista de PASOS (con sus argumentos) o un comando
 # Retorna   : el código del paso
 # ============================================
 correr_paso() {
@@ -195,16 +196,21 @@ correr_paso() {
   registrar "===== ${prefijo}"
   inicio=$SECONDS
 
-  # --- 1. EL PASO, DE FONDO Y EN SU PROPIO GRUPO DE PROCESOS ---
-  # CON set -m CADA TRABAJO DE FONDO TIENE SU GRUPO: Ctrl+C O CERRAR LA
-  # VENTANA LO DETIENE ENTERO (apt, dpkg Y SUS HIJOS), NO SOLO EL PRIMERO.
-  # LA ENTRADA VIENE DE /dev/null: UN GRUPO DE FONDO QUE TOCA LA TERMINAL
-  # QUEDA DETENIDO (SIGTTOU). MEDIDO: apt-get QUEDÓ EN ESTADO «T» AL
-  # CONFIGURAR LA TERMINAL DE dpkg
-  set -m
-  "$@" < /dev/null >> "$LOG" 2>&1 &
+  # --- 1. EL PASO, DE FONDO, EN UNA SESIÓN PROPIA Y SIN TERMINAL ---
+  # UN PASO DE FONDO QUE TOCA LA TERMINAL QUEDA DETENIDO PARA SIEMPRE
+  # (SIGTTOU, GV-236): apt-get CON LA ENTRADA HEREDADA, Y EL INSTALADOR DE
+  # veraPDF (IzPack), QUE ABRE /dev/tty POR SU CUENTA PARA CORRER stty
+  # (MEDIDO EN LA NOTEBOOK: UNA HORA EN ESTADO «T»). CON setsid EL PASO NO
+  # TIENE TERMINAL: /dev/tty NO SE PUEDE ABRIR Y NADA SE DETIENE. EL PASO ES
+  # ADEMÁS LÍDER DE SU GRUPO: detener LO MATA ENTERO. setsid NO CORRE
+  # FUNCIONES: UNA FUNCIÓN DE PASO SE CORRE VOLVIENDO A LLAMAR A ESTE
+  # MISMO ARCHIVO CON --paso
+  if declare -F "$1" >/dev/null; then
+    setsid /bin/bash "$SCRIPT" --paso "$@" < /dev/null >> "$LOG" 2>&1 &
+  else
+    setsid "$@" < /dev/null >> "$LOG" 2>&1 &
+  fi
   PID_PASO=$!
-  set +m
 
   # --- 2. LA ANIMACIÓN ---
   # EL ANCHO SE TOMA AL EMPEZAR CADA PASO (SC-107)
@@ -248,8 +254,11 @@ correr_paso() {
 #             la fase de root repara primero (dpkg --configure -a)
 # ============================================
 detener() {
+  # TERM AL GRUPO DEL PASO, Y CONT: UN PROCESO DETENIDO NO RECIBE TERM HASTA
+  # QUE SIGUE
   if [ -n "$PID_PASO" ]; then
     kill -TERM -- "-${PID_PASO}" 2>/dev/null || kill -TERM "$PID_PASO" 2>/dev/null
+    kill -CONT -- "-${PID_PASO}" 2>/dev/null || true
   fi
   printf '\n'
   registrar "INTERRUMPIDO"
@@ -767,6 +776,23 @@ paso_control_final() {
   bash "${trabajo}/base/configurar-conexion.sh" --controlar || { echo "El archivo de conexión no abre una sesión."; return 1; }
   echo "Conexión con la base: en orden."
 }
+
+# --- 2 BIS. UN PASO, CORRIDO POR correr_paso ---
+# SOLO LAS FUNCIONES DE PASO: --paso NO ES UNA PUERTA PARA CORRER CUALQUIER
+# FUNCIÓN DEL ARCHIVO
+PASOS=(paso_descarga paso_preparar_herramientas paso_control_final
+       root_paso_repositorio root_paso_paquetes root_paso_herramientas root_paso_base)
+if [ "${1:-}" = "--paso" ]; then
+  shift
+  for p in "${PASOS[@]}"; do
+    if [ "${1:-}" = "$p" ]; then
+      "$@"
+      exit $?
+    fi
+  done
+  echo "Paso desconocido: ${1:-}"
+  exit 1
+fi
 
 # --- 3. FASE 1: COMO USUARIO COMÚN ---
 

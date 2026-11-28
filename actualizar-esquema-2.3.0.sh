@@ -103,7 +103,7 @@ echo
 echo "${NEGRITA}Actualización del esquema de gbpublisher a 2.3.0${RESET}"
 echo "--------------------------------------------------"
 echo "Agrega a libros_md la fecha del depósito en Crossref. No se modifica"
-echo "ninguna fila: todos los libros quedan sin depositar hasta que lo marques."
+echo "ninguna fila: todos los libros quedan sin depositar hasta que se marque el depósito."
 echo
 
 # --- 2. VERIFICACIONES PREVIAS ---

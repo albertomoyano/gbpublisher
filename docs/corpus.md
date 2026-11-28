@@ -6364,7 +6364,7 @@ LO IMPLEMENTADO (27/11/2026)
 - **Fase 3, usuario:** paso 7, `configurar-conexion.sh --escribir` (o `--controlar` si no hubo contraseña nueva); paso 8, la versión instalada, `integridad.sh --preparar` sin nada que bajar y la conexión.
 - **El cierre:** qué quedó, cómo abrirlo, el registro y, en una instalación nueva, el aviso en mayúsculas de `admin`/`admin123`.
 - **Ante un error:** el motivo, las últimas líneas del registro, «vuelva a ejecutar el instalador» y el enlace al formulario con versión, sistema y paso. Con un motivo que repetir no arregla (sistema, MariaDB, base 1.x, versión más nueva) no aconseja repetir.
-- **El avance:** cada paso de fondo, en su propio grupo de procesos, con la entrada desde `/dev/null` (GV-236).
+- **El avance:** cada paso de fondo con `setsid`, sin terminal, en su propio grupo y con la entrada desde `/dev/null`. Una función de paso se corre volviendo a llamar al instalador con `--paso` (GV-236; corregido el 28/11/2026, después de que veraPDF quedara detenido en la notebook).
 
 `.github/ISSUE_TEMPLATE/instalador.yml`: el formulario. Los campos `version`, `sistema` y `paso` se completan desde la dirección; GitHub permite llenar así los campos de texto de un formulario. La etiqueta `instalador` se aplica solo si existe en el repositorio.
 
@@ -6409,13 +6409,22 @@ Sin probar en el contenedor:
 - packtools: el proxy rechaza la descarga de GitHub (403). En la prueba se simuló.
 - pkexec real, Mint, TeX Live y chromium.
 
+PRUEBA EN LA NOTEBOOK (Alberto, 28/11/2026). Mint 22.3, sin gbpublisher, con TeX Live ya instalado. Ensayo 0.0.455 con pkexec real.
+
+- **Primera corrida:** pasos 1 a 4 bien. Los archivos se tomaron de la carpeta del ensayo; apt instaló 30 paquetes en 28 segundos, con MySQL, Gambas del repositorio estable y gbpublisher. El paso 5 quedó una hora detenido en el instalador de veraPDF (GV-236, corregido en act-146).
+- **Segunda corrida, con el instalador corregido:** entró como «reparar» porque el paquete ya estaba. No repitió descargas. Instaló veraPDF, packtools desde GitHub (lo que no se había podido probar en el contenedor) y vnu en 16 segundos. Creó la base: 68 tablas y las doce semillas verificadas contra el encabezado del baseline. Aplicó de la 2.1.0 a la 2.5.0, con los respaldos en `/home/alberto/gbpublisher-respaldos/`. Escribió el archivo de conexión, y el control final dio todo en orden. La fase de root identificó al usuario por `PKEXEC_UID` (GV-235).
+- **La aplicación** abrió y se creó un usuario sin errores.
+- **Encontrado en el registro:** un voseo en el texto de `actualizar-esquema-2.3.0.sh` («hasta que lo marques»), corregido. Era el único que quedaba en los scripts 2.x.
+
+Decisión de Alberto: se publica la 0.0.455, y lo que falta se prueba en una instalación real, en la notebook, borrando partes.
+
 **Relaciones:** vinculo:SC-95,vinculo:SC-106,vinculo:SC-22,vinculo:GV-206,vinculo:GV-209,vinculo:SC-81,vinculo:GV-234,apoya:GV-235,apoya:GV-236,vinculo:SC-101,vinculo:SC-11
 
-**PENDIENTE:** Probar en la notebook (Mint 22 sin gbpublisher), con la carpeta de publicar.sh --ensayo y un .deb regenerado:
-1. Instalación nueva completa, con pkexec real: la ventana, la salida de root en la terminal, cerrar la ventana con la X (126), y que llegue PKEXEC_UID y no SUDO_USER (GV-235).
-2. TeX Live: tiempo, espacio antes y después (ajustar MINIMO_GB_NUEVA) y la animación en un paso largo.
-3. gbpublisher abierto detectado (pgrep -f /usr/bin/gb[Pp]ublisher) y Ctrl+C a mitad de apt, y la corrida siguiente que repara.
-4. Segunda corrida: verificar y reparar.
+**PENDIENTE:** Probar en una instalación real, en la notebook (borrando partes):
+1. TeX Live desde cero: tiempo y espacio antes y después; ajustar MINIMO_GB_NUEVA (hoy 12, estimado).
+2. Cerrar la ventana de pkexec con la X (código 126).
+3. gbpublisher abierto: que frene (pgrep -f /usr/bin/gb[Pp]ublisher).
+4. Ctrl+C a mitad de apt con los pasos en setsid, y la corrida siguiente que repara dpkg.
 
 Después: el artículo del blog sobre la cuenta de GitHub, cuyo enlace reemplaza @ENLACE_ARTICULO_GITHUB@ en LEER-INSTALADOR.md; la etiqueta «instalador» en el repositorio; la tanda de Mint 23; la instalación con servidor, documentada aparte (Eduvim).
 
@@ -12050,13 +12059,13 @@ CONSECUENCIA PARA EL PROYECTO
 
 Todo script que se corre con `sudo` o `pkexec` y escribe para la persona (respaldos, registros) calcula la carpeta desde `SUDO_USER` o `PKEXEC_UID`, y al salir devuelve la propiedad. Los scripts de esquema lo hacen desde esta entrada (SC-22).
 
+CON pkexec REAL (28/11/2026). En la notebook de Alberto (Mint 22.3), el instalador lanzado con pkexec recibió `PKEXEC_UID`: identificó al usuario «alberto» y dejó los respaldos de los scripts de esquema en `/home/alberto/gbpublisher-respaldos/`. Que `pkexec` no deja `SUDO_USER` sigue apoyado en su página de manual, y no cambia nada: los scripts prueban `SUDO_USER` primero y `PKEXEC_UID` después.
+
 **Relaciones:** vinculo:SC-22,vinculo:SC-107,vinculo:GV-206
 
-**PENDIENTE:** Medir con pkexec real en Mint que PKEXEC_UID llega y SUDO_USER no: será en la primera prueba del instalador.
+### GV-236 — Un paso de fondo de un script que toca la terminal queda detenido para siempre (SIGTTOU), también si abre /dev/tty por su cuenta: la entrada desde /dev/null no alcanza, setsid sí
 
-### GV-236 — bash con set -m en un script: el trabajo de fondo va a su propio grupo y Ctrl+C se lo puede matar entero, pero si toca la terminal queda detenido (SIGTTOU); con la entrada desde /dev/null no
-
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** bash 5.2 / Ubuntu 24.04 (contenedor) / script de util-linux como terminal / apt-get 2.8 · **Verificado:** 2026-11
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** bash 5.2 / Ubuntu 24.04 (contenedor) / script de util-linux como terminal / apt-get 2.8; Mint 22 (notebook de Alberto, 28/11/2026) · **Verificado:** 2026-11
 
 Medido el 27/11/2026 en el contenedor (Ubuntu 24.04, bash 5.2), con el instalador corriendo en una terminal simulada (`script`).
 
@@ -12075,9 +12084,25 @@ Ctrl+C
 - Enviado por la terminal (el carácter 0x03 por la terminal simulada): la trampa del script corre y el `sleep 300` del paso, en su grupo, muere. Medido.
 - `kill -INT` al proceso del script, en cambio, no dispara la trampa mientras el script espera a un hijo en primer plano: bash espera a ver si el hijo también murió por SIGINT. Una prueba de Ctrl+C se hace por la terminal, no con `kill -INT`. `kill -TERM` sí la dispara.
 
+CORRECCIÓN (28/11/2026): /dev/null NO ALCANZA
+
+En la notebook de Alberto (Mint 22, instalación nueva), el paso 5 del instalador quedó una hora detenido. `ps` mostró toda la cadena en estado `T`: `integridad.sh --instalar`, el instalador de veraPDF (IzPack, `java -jar verapdf-izpack-installer-1.30.1.jar -options …`) y, al final, `sh -c stty -icanon min 1 -icrnl -inlcr -ixon < /dev/tty`. IzPack abre `/dev/tty` por su cuenta: no usa la entrada estándar, así que redirigirla no cambia nada. Reproducido en el contenedor con un paso que corre ese mismo `stty`: con `set -m` y la entrada desde `/dev/null`, colgado.
+
+En el contenedor el problema no había aparecido porque `--instalar` se probó desde una consola sin terminal, donde abrir `/dev/tty` falla y IzPack sigue. Y en la prueba del instalador con terminal, veraPDF ya estaba instalado.
+
+LA SOLUCIÓN: setsid
+
+El paso corre con `setsid`, en una sesión propia y sin terminal de control:
+
+- abrir `/dev/tty` falla (`stty` sale con 2) y el instalador de veraPDF sigue y termina bien (medido en el contenedor con `/opt/verapdf` borrado y el instalador en una terminal simulada);
+- el proceso que lanza `setsid` es líder de su grupo, así que `kill -TERM -- -<pid>` sigue matando el paso entero;
+- Ctrl+C ya no le llega al paso desde la terminal (está en otra sesión): lo detiene la trampa del script. Medido: Ctrl+C por la terminal detuvo un `sleep 300` del paso.
+
+`setsid` no corre funciones de bash: el instalador vuelve a llamarse a sí mismo con `--paso <función>`, limitado a una lista de funciones de paso. Ya no usa `set -m`. La trampa manda TERM y después CONT al grupo, porque un proceso detenido no recibe TERM hasta que sigue.
+
 CONSECUENCIA
 
-Todo paso de fondo de un script con `set -m` lleva la entrada desde `/dev/null`.
+Todo paso de fondo de un script que muestra algo en la terminal mientras tanto corre con `setsid` y con la entrada desde `/dev/null`.
 
 **Relaciones:** apoya:SC-107
 
