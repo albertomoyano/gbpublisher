@@ -1,0 +1,1031 @@
+#!/usr/bin/env bash
+# ============================================================================
+# Script    : instalador.sh
+# Propósito : Instala, actualiza o repara gbpublisher en una computadora con
+#             Linux Mint 22, con su base de datos local (SC-107). Es para
+#             personas sin formación técnica que instalan solas: explica cada
+#             decisión antes de pedirla y pide la contraseña UNA sola vez.
+#
+# ESTE ARCHIVO SE GENERA. La plantilla es distribucion/instalador.sh.in y la
+# completa distribucion/publicar.sh con la versión y las huellas de lo que
+# se publica. No se edita el instalador publicado: se corrige la plantilla y
+# se publica una revisión (publicar.sh --revision).
+#
+# USO
+#   bash instalador.sh
+#   La línea para pegar está en LEER-INSTALADOR.md y en las notas de la
+#   versión. Se corre SIN sudo.
+#
+# LAS TRES FASES (pkexec autoriza un solo comando)
+#   1. Usuario: controles, diagnóstico, resumen y confirmación; descargas a
+#      ~/gbpublisher-instalacion/ con su huella; la contraseña nueva de la
+#      base, si hace falta.
+#   2. root, con pkexec (este mismo archivo, con --fase-root): repositorio
+#      de Gambas, apt con el .deb, /opt, MySQL, la base, el esquema y la
+#      clave de app_user.
+#   3. Usuario: el archivo de conexión, el control final y el cierre.
+#
+# ARCHIVOS LOCALES
+#   Si junto a este archivo están el .deb y el paquete de la base de esta
+#   versión, con la huella esperada, los usa y no los descarga. Sirve para
+#   probar antes de publicar (publicar.sh --ensayo) y para una red que
+#   bloquee GitHub.
+#
+# SOLO PARA PRUEBAS
+#   GBP_ENSAYO_SISTEMA=1 deja seguir en un sistema que no es Linux Mint 22,
+#   con un aviso. No se documenta para el usuario.
+#
+# SALIDA: 0 terminó bien; 1 algo falló o se canceló.
+# ============================================================================
+
+set -uo pipefail
+
+# --- 0. LO QUE ESCRIBE publicar.sh (NO SE EDITA A MANO) ---
+VERSION="@VERSION@"
+REVISION="@REVISION@"
+DEB_NOMBRE="@DEB_NOMBRE@"
+DEB_SHA="@DEB_SHA@"
+BASE_NOMBRE="@BASE_NOMBRE@"
+BASE_SHA="@BASE_SHA@"
+ESQUEMA="@ESQUEMA@"
+BASELINE="@BASELINE@"
+GENERADO="@GENERADO@"
+
+# --- 1. LO FIJO ---
+REPO="albertomoyano/gbpublisher"
+URL_RELEASE="https://github.com/${REPO}/releases/download/v${VERSION}"
+URL_LEER="https://github.com/${REPO}/blob/v${VERSION}/LEER-INSTALADOR.md"
+URL_ISSUES="https://github.com/${REPO}/issues/new"
+DB="gbpublisher"
+DB_USER="app_user"
+TOTAL_PASOS=8
+
+# EL REPOSITORIO DE GAMBAS, CON LOS MISMOS NOMBRES DE ARCHIVO QUE LAS
+# INSTRUCCIONES OFICIALES (gambaswiki.org, «Installation from binary
+# packages»): UNA MÁQUINA QUE YA LO TENÍA ASÍ QUEDA IGUAL, SIN DUPLICADOS.
+# EL CANAL ES stable: NO HAY REPOSITORIO POR VERSIÓN 3.22 PARA 24.04 (SC-107)
+GAMBAS_LISTA="/etc/apt/sources.list.d/home:gambas:stable.list"
+GAMBAS_LINEA="deb http://download.opensuse.org/repositories/home:/gambas:/stable/xUbuntu_24.04/ /"
+GAMBAS_CLAVE_URL="https://download.opensuse.org/repositories/home:gambas:stable/xUbuntu_24.04/Release.key"
+GAMBAS_CLAVE="/etc/apt/trusted.gpg.d/home_gambas_stable.gpg"
+
+# ESPACIO LIBRE MÍNIMO, EN GB. ESTIMADO: TeX Live completo baja unos 4-5 GB
+# Y OCUPA UNOS 7 INSTALADO. SE AJUSTA CON LO QUE MIDE CADA REGISTRO (df
+# ANTES Y DESPUÉS DE LA FASE DE root)
+MINIMO_GB_NUEVA=12
+MINIMO_GB_ACTUALIZACION=3
+MINIMO_GB_CARPETA_PERSONAL=1
+
+# LOS SITIOS QUE TIENEN QUE RESPONDER (LEER-INSTALADOR.md §7)
+SITIOS=(
+  "https://github.com"
+  "https://release-assets.githubusercontent.com"
+  "https://raw.githubusercontent.com"
+  "https://codeload.github.com"
+  "https://download.opensuse.org"
+  "https://registry.npmjs.org"
+  "https://software.verapdf.org"
+  "https://pypi.org"
+  "https://files.pythonhosted.org"
+)
+
+SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+DIR_SCRIPT="$(dirname "$SCRIPT")"
+
+# --- 2. COLORES Y MENSAJES ---
+if [ -t 1 ]; then
+  ROJO=$'\e[0;31m'; VERDE=$'\e[0;32m'; AMBAR=$'\e[0;33m'
+  AZUL=$'\e[0;34m'; TENUE=$'\e[2m'; NEGRITA=$'\e[1m'; RESET=$'\e[0m'
+  HAY_TERMINAL=1
+else
+  ROJO=""; VERDE=""; AMBAR=""; AZUL=""; TENUE=""; NEGRITA=""; RESET=""
+  HAY_TERMINAL=0
+fi
+
+LOG=""
+PID_PASO=""
+
+# ============================================
+# Función   : registrar
+# Propósito : Escribe una línea con hora en el registro de la corrida
+# Parámetros: $* — el texto
+# Retorna   : 0 siempre
+# ============================================
+registrar() {
+  [ -n "$LOG" ] && printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" >> "$LOG"
+  return 0
+}
+
+# ============================================
+# Funciones : ok, aviso, error, info
+# Propósito : Mensajes en pantalla con la marca de LEER-INSTALADOR.md §3
+#             (✔ bien, ⚠ aviso, ✖ hay que resolverlo); también al registro
+# Parámetros: $* — el texto
+# ============================================
+ok()    { echo "  ${VERDE}✔${RESET} $*"; registrar "OK $*"; }
+aviso() { echo "  ${AMBAR}⚠${RESET} $*"; registrar "AVISO $*"; }
+error() { echo "  ${ROJO}✖${RESET} $*" >&2; registrar "ERROR $*"; }
+info()  { echo "  $*"; registrar "$*"; }
+
+# ============================================
+# Función   : preguntar
+# Propósito : Pregunta s/n. Acepta s, si, sí, S, SI y SÍ (SC-107)
+# Parámetros: $1 — la pregunta
+# Retorna   : 0 si respondió que sí; 1 si no
+# ============================================
+preguntar() {
+  local respuesta
+
+  read -r -p "  $1 [s/n]: " respuesta || respuesta=""
+  registrar "PREGUNTA $1 → ${respuesta}"
+  case "${respuesta,,}" in
+    s|si|sí) return 0 ;;
+    *)       return 1 ;;
+  esac
+}
+
+# ============================================
+# Función   : tiempo
+# Propósito : Da formato al tiempo transcurrido
+# Parámetros: $1 — segundos
+# Retorna   : mm:ss, o h:mm:ss desde la hora, por la salida estándar
+# ============================================
+tiempo() {
+  local s="$1"
+
+  if [ "$s" -ge 3600 ]; then
+    printf '%d:%02d:%02d' $((s / 3600)) $((s % 3600 / 60)) $((s % 60))
+  else
+    printf '%02d:%02d' $((s / 60)) $((s % 60))
+  fi
+}
+
+# ============================================
+# Función   : linea_final
+# Propósito : Escribe la línea con la que termina un paso: el título, una
+#             fila de puntos y el resultado, al ancho de la terminal
+# Parámetros: $1 — prefijo «[n/N] Título»; $2 — resultado; $3 — su color
+# ============================================
+linea_final() {
+  local prefijo="$1" resultado="$2" color="$3" ancho puntos=""
+
+  ancho="$(tput cols 2>/dev/null || echo 80)"
+  [ "$ancho" -gt 80 ] && ancho=80
+  local n=$((ancho - ${#prefijo} - ${#resultado} - 3))
+  [ "$n" -lt 3 ] && n=3
+  printf -v puntos '%*s' "$n" ''
+  puntos="${puntos// /.}"
+  printf '%s %s %s%s%s\n' "$prefijo" "$puntos" "$color" "$resultado" "$RESET"
+}
+
+# ============================================
+# Función   : correr_paso
+# Propósito : Corre un paso de fondo, con su salida al registro, mientras
+#             muestra el tiempo y una barra de «=» que va y viene (idea de
+#             Alberto, SC-107). La barra no mide cuánto falta: solo muestra
+#             que la computadora sigue trabajando. Sin terminal no anima.
+# Parámetros: $1 — número de paso; $2 — título; $3… — función y argumentos
+# Retorna   : el código del paso
+# ============================================
+correr_paso() {
+  local numero="$1" titulo="$2" prefijo inicio ancho zona recorrido k=0 p barra codigo
+  shift 2
+
+  prefijo="[${numero}/${TOTAL_PASOS}] ${titulo}"
+  registrar "===== ${prefijo}"
+  inicio=$SECONDS
+
+  # --- 1. EL PASO, DE FONDO Y EN SU PROPIO GRUPO DE PROCESOS ---
+  # CON set -m CADA TRABAJO DE FONDO TIENE SU GRUPO: Ctrl+C O CERRAR LA
+  # VENTANA LO DETIENE ENTERO (apt, dpkg Y SUS HIJOS), NO SOLO EL PRIMERO.
+  # LA ENTRADA VIENE DE /dev/null: UN GRUPO DE FONDO QUE TOCA LA TERMINAL
+  # QUEDA DETENIDO (SIGTTOU). MEDIDO: apt-get QUEDÓ EN ESTADO «T» AL
+  # CONFIGURAR LA TERMINAL DE dpkg
+  set -m
+  "$@" < /dev/null >> "$LOG" 2>&1 &
+  PID_PASO=$!
+  set +m
+
+  # --- 2. LA ANIMACIÓN ---
+  # EL ANCHO SE TOMA AL EMPEZAR CADA PASO (SC-107)
+  if [ "$HAY_TERMINAL" -eq 1 ]; then
+    ancho="$(tput cols 2>/dev/null || echo 80)"
+    while kill -0 "$PID_PASO" 2>/dev/null; do
+      local t; t="$(tiempo $((SECONDS - inicio)))"
+      zona=$((ancho - ${#prefijo} - ${#t} - 5))
+      if [ "$zona" -ge 10 ]; then
+        recorrido=$((zona - 4))
+        p=$((k % (2 * recorrido)))
+        [ "$p" -gt "$recorrido" ] && p=$((2 * recorrido - p))
+        printf -v barra '%*s====%*s' "$p" '' $((recorrido - p)) ''
+      else
+        barra=""
+      fi
+      printf '\r%s  %s  %s' "$prefijo" "$t" "$barra"
+      k=$((k + 1))
+      sleep 0.2
+    done
+    printf '\r\e[K'
+  fi
+
+  # --- 3. EL RESULTADO ---
+  wait "$PID_PASO"
+  codigo=$?
+  PID_PASO=""
+  registrar "===== fin ${prefijo}: código ${codigo}, $(tiempo $((SECONDS - inicio)))"
+  if [ "$codigo" -eq 0 ]; then
+    linea_final "$prefijo" "ok" "$VERDE"
+  else
+    linea_final "$prefijo" "falló" "$ROJO"
+  fi
+  return "$codigo"
+}
+
+# ============================================
+# Función   : detener
+# Propósito : Ctrl+C o la ventana cerrada: detiene también el trabajo de
+#             fondo. La próxima corrida retoma; si el corte fue durante apt,
+#             la fase de root repara primero (dpkg --configure -a)
+# ============================================
+detener() {
+  if [ -n "$PID_PASO" ]; then
+    kill -TERM -- "-${PID_PASO}" 2>/dev/null || kill -TERM "$PID_PASO" 2>/dev/null
+  fi
+  printf '\n'
+  registrar "INTERRUMPIDO"
+  echo "  ${AMBAR}Se detuvo la instalación.${RESET} Para retomarla, vuelva a ejecutar: bash instalador.sh"
+  exit 1
+}
+
+# ============================================
+# Función   : comparar
+# Propósito : Compara dos versiones con las reglas de dpkg
+# Parámetros: $1 $2 — versiones; $3 — operador de dpkg (lt, le, gt, ge, eq)
+# Retorna   : 0 si se cumple
+# ============================================
+comparar() {
+  dpkg --compare-versions "$1" "$3" "$2"
+}
+
+# ============================================
+# Función   : huella
+# Propósito : sha256 de un archivo, o vacío si no existe
+# Parámetros: $1 — ruta
+# Retorna   : la huella por la salida estándar
+# ============================================
+huella() {
+  [ -f "$1" ] && sha256sum "$1" | cut -d' ' -f1
+  return 0
+}
+
+# ============================================
+# Función   : base_esquema_aplicado
+# Propósito : Lista lo que tiene registrado esquema_version (como root)
+# Retorna   : una fila por parche, por la salida estándar
+# ============================================
+base_esquema_aplicado() {
+  mysql -N -B -e "SELECT parche FROM \`${DB}\`.esquema_version;" 2>/dev/null
+}
+
+# ============================================================================
+#                              FASE 2: root
+# ============================================================================
+
+# ============================================
+# Función   : root_fallar
+# Propósito : Termina la fase de root con un mensaje. El código le dice a la
+#             fase de usuario qué paso falló
+# Parámetros: $1 — código; $2 — mensaje
+# ============================================
+root_fallar() {
+  error "$2"
+  exit "$1"
+}
+
+# ============================================
+# Función   : root_asegurar_mysql
+# Propósito : Deja el servidor MySQL respondiendo
+# Retorna   : 0 si responde
+# ============================================
+root_asegurar_mysql() {
+  local i
+
+  mysql -e "SELECT 1;" >/dev/null 2>&1 && return 0
+  # CON systemd (MINT) systemctl; SIN ÉL (EL CONTENEDOR DE PRUEBAS) service
+  if [ -d /run/systemd/system ]; then
+    systemctl enable --now mysql || return 1
+  else
+    service mysql start || return 1
+  fi
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    mysql -e "SELECT 1;" >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
+
+# ============================================
+# Función   : root_paso_repositorio
+# Propósito : Paso 3. Repara un apt interrumpido, deja un solo repositorio de
+#             Gambas (el estable de openSUSE) y actualiza las listas
+# Retorna   : 0 bien
+# ============================================
+root_paso_repositorio() {
+  local f tmp
+
+  # --- 1. UNA CORRIDA ANTERIOR CORTADA DURANTE apt ---
+  if [ -n "$(dpkg --audit 2>/dev/null)" ]; then
+    echo "dpkg quedó interrumpido: se repara."
+    dpkg --configure -a || return 1
+  fi
+
+  # --- 2. OTROS REPOSITORIOS DE GAMBAS: NO PUEDEN CONVIVIR ---
+  # stable Y master A LA VEZ NO (gambaswiki), NI UN PPA. SE RENOMBRAN, NO SE
+  # BORRAN: QUIEN LOS PUSO PUEDE VOLVER ATRÁS
+  for f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+    [ -f "$f" ] || continue
+    [ "$f" = "$GAMBAS_LISTA" ] && continue
+    if grep -qi 'gambas' "$f"; then
+      mv "$f" "${f}.gbpublisher-deshabilitado" || return 1
+      echo "Repositorio de Gambas deshabilitado: $f"
+    fi
+  done
+  if grep -qi '^[^#]*gambas' /etc/apt/sources.list 2>/dev/null; then
+    echo "AVISO: /etc/apt/sources.list tiene una línea de Gambas; no se toca."
+  fi
+
+  # --- 3. EL REPOSITORIO ESTABLE Y SU CLAVE ---
+  echo "$GAMBAS_LINEA" > "$GAMBAS_LISTA" || return 1
+  chmod 644 "$GAMBAS_LISTA"
+  tmp="$(mktemp)"
+  if ! curl -fsSL --retry 2 --connect-timeout 20 "$GAMBAS_CLAVE_URL" | gpg --dearmor > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  install -m 644 "$tmp" "$GAMBAS_CLAVE" || { rm -f "$tmp"; return 1; }
+  rm -f "$tmp"
+  echo "Clave del repositorio de Gambas:"
+  gpg --show-keys --with-fingerprint "$GAMBAS_CLAVE" 2>/dev/null || true
+
+  # --- 4. LISTAS ---
+  apt-get update
+}
+
+# ============================================
+# Función   : root_paso_paquetes
+# Propósito : Paso 4. Instala el .deb con sus dependencias (TeX Live, Java,
+#             Qt, Gambas) y MySQL si falta
+# Parámetros: $1 — carpeta de root con el .deb; $2 — caso
+# Retorna   : 0 bien
+# ============================================
+root_paso_paquetes() {
+  local dir="$1" caso="$2" paquetes=() opciones=()
+
+  paquetes=("${dir}/${DEB_NOMBRE}")
+  if ! dpkg-query -W -f='${Status}' mysql-server 2>/dev/null | grep -q 'install ok installed'; then
+    paquetes+=(mysql-server)
+  fi
+  opciones=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+  # LA MISMA VERSIÓN: «VERIFICAR Y REPARAR» REINSTALA EL PAQUETE
+  [ "$caso" = "reparar" ] && opciones+=(--reinstall)
+
+  echo "Espacio antes de apt:"; df -h / || true
+  DEBIAN_FRONTEND=noninteractive apt-get install "${opciones[@]}" "${paquetes[@]}" || return 1
+  # apt-get GUARDA LOS PAQUETES BAJADOS (VARIOS GB CON TeX Live): SE BORRAN
+  apt-get clean
+  echo "Espacio después de apt:"; df -h / || true
+}
+
+# ============================================
+# Función   : root_paso_herramientas
+# Propósito : Paso 5. Instala en /opt lo que integridad.sh --preparar dejó
+#             bajado (SC-95). integridad.sh vuelve a verificar las huellas
+# Parámetros: $1 — carpeta de descargas del usuario
+# Retorna   : 0 bien
+# ============================================
+root_paso_herramientas() {
+  local descargas="$1" componentes=()
+
+  mapfile -t componentes < <(grep -v '^$' "${descargas}/componentes" 2>/dev/null)
+  if [ "${#componentes[@]}" -eq 0 ]; then
+    echo "Las herramientas de producción ya estaban en orden."
+    return 0
+  fi
+  GBP_LLAMADO_POR=instalador bash /usr/share/gbpublisher/engine/integridad.sh \
+    --instalar "$descargas" "${componentes[@]}"
+}
+
+# ============================================
+# Función   : root_cargar_baseline
+# Propósito : Carga el baseline en una base que no existe y lo verifica con
+#             los números que el propio baseline declara en su encabezado
+#             («-- Verificación: …», los escribe generar-baseline.sh)
+# Parámetros: $1 — ruta del baseline
+# Retorna   : 0 cargado y verificado
+# ============================================
+root_cargar_baseline() {
+  local archivo="$1" esperadas tablas linea tabla filas n fallos=0
+
+  esperadas="$(sed -n 's/^-- Verificación: tablas=\([0-9]*\)$/\1/p' "$archivo")"
+  if [ -z "$esperadas" ]; then
+    echo "El baseline no declara sus números de verificación."
+    return 1
+  fi
+  mysql < "$archivo" || return 1
+
+  tablas="$(mysql -N -B -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='${DB}' AND TABLE_TYPE='BASE TABLE';")"
+  echo "Tablas: ${tablas} (se esperaban ${esperadas})"
+  [ "$tablas" = "$esperadas" ] || fallos=$((fallos + 1))
+
+  # LAS SEMILLAS SON LO QUE HACE USABLE LA BASE RECIÉN CREADA
+  while IFS= read -r linea; do
+    tabla="${linea%%=*}"
+    filas="${linea#*=}"
+    n="$(mysql -N -B -e "SELECT COUNT(*) FROM \`${DB}\`.\`${tabla}\`;" 2>/dev/null || echo 0)"
+    echo "${tabla}: ${n} filas (se esperaban ${filas})"
+    [ "$n" = "$filas" ] || fallos=$((fallos + 1))
+  done < <(sed -n 's/^-- Verificación: semilla \([a-z_]*=[0-9]*\)$/\1/p' "$archivo")
+
+  [ "$fallos" -eq 0 ]
+}
+
+# ============================================
+# Función   : root_paso_base
+# Propósito : Paso 6. MySQL en marcha, la base (nueva desde el baseline o la
+#             existente), app_user, el esquema hasta ESQUEMA y la clave nueva
+# Parámetros: $1 — carpeta de root con el paquete de la base descomprimido;
+#             $2 — archivo con la clave nueva, o «-»; $3 — carpeta personal
+#             del usuario (para los respaldos)
+# Retorna   : 0 bien
+# ============================================
+root_paso_base() {
+  local dir="$1" clave="$2" casa="$3" aplicados v script provisoria alea codigo
+  local scripts=()
+
+  # --- 1. EL SERVIDOR ---
+  root_asegurar_mysql || { echo "El servidor MySQL no arranca."; return 1; }
+
+  # --- 2. LA BASE: SE CREA SOLO SI NO EXISTE. NUNCA SE BORRA ---
+  if [ -z "$(mysql -N -B -e "SHOW DATABASES LIKE '${DB}';")" ]; then
+    echo "No hay base: se crea desde el baseline ${BASELINE}."
+    root_cargar_baseline "${dir}/gbpublisher-baseline-${BASELINE}.sql" || return 1
+  else
+    echo "La base ya existe: se conserva."
+  fi
+
+  # --- 3. app_user, SOLO EN localhost ---
+  # LOS PERMISOS SON LOS QUE USA LA APLICACIÓN EN LA MÁQUINA DE ALBERTO
+  # (SELECT, INSERT, UPDATE, DELETE, SC-101) MÁS SHOW VIEW PARA EL RESPALDO
+  # DIARIO (1.34.0). SIN TRIGGER, A PROPÓSITO (SC-101). LA CLAVE PROVISORIA
+  # NO SE USA: configurar-conexion.sh --root PONE LA DEFINITIVA
+  if [ -z "$(mysql -N -B -e "SELECT 1 FROM mysql.user WHERE user='${DB_USER}' AND host='localhost';")" ]; then
+    alea="$(head -c 4096 /dev/urandom | tr -dc 'A-Za-z0-9')"
+    provisoria="P${alea:0:27}Gb7_"
+    printf "CREATE USER '%s'@'localhost' IDENTIFIED BY '%s';\nGRANT SELECT, INSERT, UPDATE, DELETE, SHOW VIEW ON \`%s\`.* TO '%s'@'localhost';\n" \
+      "$DB_USER" "$provisoria" "$DB" "$DB_USER" | mysql || return 1
+    echo "Cuenta ${DB_USER}@localhost creada."
+  fi
+
+  # --- 4. EL ESQUEMA: CADA SCRIPT 2.x QUE FALTE, EN ORDEN ---
+  # SIN PREGUNTAS (LA CONFIRMACIÓN YA SE PIDIÓ) Y CON LOS RESPALDOS EN LA
+  # CARPETA DE QUIEN INSTALA (SC-22, GV-235)
+  aplicados="$(base_esquema_aplicado)"
+  mapfile -t scripts < <(cd "$dir" && ls actualizar-esquema-2.*.sh 2>/dev/null | sort -V)
+  for script in "${scripts[@]}"; do
+    v="${script#actualizar-esquema-}"
+    v="${v%.sh}"
+    comparar "$v" "$BASELINE" gt || continue
+    comparar "$v" "$ESQUEMA" le || continue
+    if grep -qx "actualizacion-${v}" <<< "$aplicados"; then
+      continue
+    fi
+    echo "Se aplica ${script}."
+    GBP_SIN_PREGUNTAS=1 GBP_DIR_RESPALDOS="${casa}/gbpublisher-respaldos" \
+      bash "${dir}/${script}" < /dev/null || return 1
+  done
+
+  # --- 5. EL ESQUEMA QUEDÓ DONDE DEBE ---
+  aplicados="$(base_esquema_aplicado)"
+  if ! grep -qxE "(actualizacion|baseline)-${ESQUEMA//./\\.}" <<< "$aplicados"; then
+    echo "La base no quedó en el esquema ${ESQUEMA}."
+    return 1
+  fi
+
+  # --- 6. LA CLAVE NUEVA, SI LA FASE DE USUARIO LA GENERÓ ---
+  if [ "$clave" != "-" ]; then
+    bash "${dir}/configurar-conexion.sh" --root "$clave"
+    codigo=$?
+    # 4 ES «BIEN, Y HAY CUENTAS DE RED» (SC-106)
+    [ "$codigo" -eq 0 ] || [ "$codigo" -eq 4 ] || return 1
+  fi
+  return 0
+}
+
+# ============================================
+# Función   : fase_root
+# Propósito : La parte que corre como root, con pkexec. Copia lo bajado a
+#             una carpeta de root y vuelve a verificar las huellas (entre la
+#             descarga y la ventana de contraseña la carpeta del usuario
+#             pudo cambiar), mira la base ANTES de tocar nada y corre los
+#             pasos 3 a 6
+# Parámetros: $1 — carpeta de trabajo; $2 — registro; $3 — caso;
+#             $4 — archivo con la clave nueva, o «-»
+# Retorna   : 0 bien; 3-6 falló ese paso; 9 la base no se puede actualizar
+#             desde acá (nada cambió); 1 otro error
+# ============================================
+fase_root() {
+  local trabajo="$1" caso="$3" clave="$4" usuario casa aplicados maximo p v
+
+  # --- 1. QUIÉN PIDIÓ EL PERMISO ---
+  [ "$(id -u)" -eq 0 ] || { echo "La fase de administrador tiene que correr como root."; exit 1; }
+  # pkexec DEJA PKEXEC_UID (GV-235); EL HOME QUE LLEGA ES EL DE root
+  if [ -z "${PKEXEC_UID:-}" ]; then
+    echo "Falta PKEXEC_UID: esta fase se lanza con pkexec desde el instalador."
+    exit 1
+  fi
+  usuario="$(id -nu "$PKEXEC_UID")"
+  casa="$(getent passwd "$usuario" | cut -d: -f6)"
+
+  # EL REGISTRO ES DEL USUARIO: SE ESCRIBE SOLO SI ES UN ARCHIVO SUYO Y NO
+  # UN ENLACE
+  if [ -f "$2" ] && [ ! -L "$2" ] && [ "$(stat -c %u "$2")" = "$PKEXEC_UID" ]; then
+    LOG="$2"
+  else
+    LOG="/var/log/gbpublisher-instalador.log"
+  fi
+  registrar "fase de root: usuario ${usuario}, caso ${caso}"
+  trap detener INT TERM HUP
+
+  # --- 2. LO BAJADO, COPIADO A UNA CARPETA DE root Y VERIFICADO DE NUEVO ---
+  # GLOBAL Y NO local: LA TRAMPA DE SALIDA CORRE CUANDO LA FUNCIÓN YA TERMINÓ
+  RAIZ="$(mktemp -d /tmp/gbp-instalador-root.XXXXXX)" || exit 1
+  chmod 755 "$RAIZ"
+  trap 'rm -rf -- "$RAIZ"' EXIT
+  cp "${trabajo}/${DEB_NOMBRE}" "${trabajo}/${BASE_NOMBRE}" "$RAIZ/" || root_fallar 1 "No se pudieron copiar las descargas."
+  chmod 644 "${RAIZ}/${DEB_NOMBRE}"
+  [ "$(huella "${RAIZ}/${DEB_NOMBRE}")" = "$DEB_SHA" ] || root_fallar 1 "El paquete de gbpublisher cambió después de bajarse. No se instaló nada."
+  [ "$(huella "${RAIZ}/${BASE_NOMBRE}")" = "$BASE_SHA" ] || root_fallar 1 "El paquete de la base cambió después de bajarse. No se instaló nada."
+  mkdir -p "${RAIZ}/base"
+  tar -xzf "${RAIZ}/${BASE_NOMBRE}" -C "${RAIZ}/base" --strip-components=1 || root_fallar 1 "No se pudo abrir el paquete de la base."
+
+  # --- 3. LA BASE, ANTES DE TOCAR NADA ---
+  # UNA BASE 1.x NO SE ACTUALIZA DESDE ACÁ (SC-107, DECISIÓN a); UNA MÁS NUEVA
+  # QUE ESTE INSTALADOR TAMPOCO: NUNCA SE BAJA DE VERSIÓN
+  if command -v mysql >/dev/null 2>&1 && root_asegurar_mysql 2>/dev/null \
+     && [ -n "$(mysql -N -B -e "SHOW DATABASES LIKE '${DB}';" 2>/dev/null)" ]; then
+    aplicados="$(base_esquema_aplicado)"
+    if ! grep -qxE '(actualizacion|baseline)-2\.0\.0' <<< "$aplicados"; then
+      root_fallar 9 "La base de gbpublisher de esta computadora es anterior a la 2.0.0. El instalador no la actualiza: hay que llevarla a la 2.0.0 a mano (BBDD_LEEME.md, sección 5). No se instaló nada."
+    fi
+    maximo="0"
+    while IFS= read -r p; do
+      v="${p#*-}"
+      [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+      comparar "$v" "$maximo" gt && maximo="$v"
+    done <<< "$aplicados"
+    if comparar "$maximo" "$ESQUEMA" gt; then
+      root_fallar 9 "La base de esta computadora (esquema ${maximo}) es más nueva que este instalador (esquema ${ESQUEMA}). Use el instalador de la versión más reciente. No se instaló nada."
+    fi
+    info "La base está en el esquema ${maximo}: se conserva."
+  fi
+
+  # --- 4. LOS PASOS ---
+  correr_paso 3 "Repositorio de Gambas" root_paso_repositorio || exit 3
+  correr_paso 4 "Instalación de gbpublisher y TeX Live" root_paso_paquetes "$RAIZ" "$caso" || exit 4
+  correr_paso 5 "Herramientas de producción en /opt" root_paso_herramientas "${trabajo}/herramientas" || exit 5
+  correr_paso 6 "Base de datos" root_paso_base "${RAIZ}/base" "$clave" "$casa" || exit 6
+  exit 0
+}
+
+if [ "${1:-}" = "--fase-root" ]; then
+  shift
+  [ "$#" -eq 4 ] || { echo "Uso interno: --fase-root <trabajo> <registro> <caso> <clave|->"; exit 1; }
+  fase_root "$@"
+fi
+
+# ============================================================================
+#                         FASES 1 Y 3: usuario
+# ============================================================================
+
+# ============================================
+# Función   : codificar_url
+# Propósito : Codifica un texto para un parámetro de URL
+# Parámetros: $1 — el texto
+# Retorna   : el texto codificado por la salida estándar
+# ============================================
+codificar_url() {
+  local texto="$1" i c salida="" LC_ALL=C
+
+  for ((i = 0; i < ${#texto}; i++)); do
+    c="${texto:i:1}"
+    case "$c" in
+      [a-zA-Z0-9.~_-]) salida+="$c" ;;
+      *) printf -v c '%%%02X' "'$c"; salida+="$c" ;;
+    esac
+  done
+  printf '%s' "$salida"
+}
+
+# ============================================
+# Función   : fallar
+# Propósito : Cierre ante un error: qué falló, el registro y el enlace al
+#             formulario de reporte ya completado (SC-107)
+# Parámetros: $1 — qué falló (una línea); $2 — el paso, para el formulario;
+#             $3 — «definitivo» si volver a ejecutar no lo arregla (sistema,
+#             MariaDB, base 1.x, versión más nueva): no se aconseja repetir
+# ============================================
+fallar() {
+  local sistema enlace
+
+  echo
+  error "$1"
+  if [ -n "$LOG" ] && [ -f "$LOG" ]; then
+    echo
+    echo "  ${TENUE}Últimas líneas del registro:${RESET}"
+    tail -n 8 "$LOG" | sed "s/^/    ${TENUE}/;s/\$/${RESET}/"
+  fi
+  sistema="$( (. /etc/os-release && echo "${PRETTY_NAME:-?}") 2>/dev/null)"
+  enlace="${URL_ISSUES}?template=instalador.yml"
+  enlace+="&version=$(codificar_url "${VERSION} r${REVISION}")"
+  enlace+="&sistema=$(codificar_url "${sistema}")"
+  enlace+="&paso=$(codificar_url "$2")"
+  echo
+  echo "  ${NEGRITA}Qué hacer:${RESET}"
+  if [ "${3:-}" = "definitivo" ]; then
+    echo "  Si necesita ayuda, repórtelo en este formulario, ya completado, y"
+    echo "  adjunte el registro:"
+  else
+    echo "  1. Vuelva a ejecutar el instalador: bash instalador.sh"
+    echo "     Retoma desde donde quedó y muchas veces resuelve el problema."
+    echo "  2. Si el problema sigue, repórtelo en este formulario, ya completado,"
+    echo "     y adjunte el registro:"
+  fi
+  echo
+  echo "     ${AZUL}${enlace}${RESET}"
+  echo
+  [ -n "$LOG" ] && echo "     Registro: ${LOG}"
+  registrar "FALLÓ: $1 (paso: $2)"
+  echo
+  read -r -p "  Pulse Enter para cerrar. " _ || true
+  exit 1
+}
+
+# ============================================
+# Función   : bajar
+# Propósito : Deja en la carpeta de trabajo un archivo de la versión con su
+#             huella: lo toma de junto al instalador, lo reusa si ya estaba
+#             bajado, o lo baja
+# Parámetros: $1 — nombre; $2 — huella esperada; $3 — carpeta de trabajo
+# Retorna   : 0 si quedó con la huella esperada
+# ============================================
+bajar() {
+  local nombre="$1" esperada="$2" trabajo="$3" destino
+
+  destino="${trabajo}/${nombre}"
+  if [ "$(huella "$destino")" = "$esperada" ]; then
+    echo "${nombre}: ya estaba bajado y verificado."
+    return 0
+  fi
+  if [ "$(huella "${DIR_SCRIPT}/${nombre}")" = "$esperada" ]; then
+    cp "${DIR_SCRIPT}/${nombre}" "$destino" || return 1
+    echo "${nombre}: tomado de ${DIR_SCRIPT}."
+    return 0
+  fi
+  curl -fL --retry 2 --connect-timeout 20 --max-time 1800 -o "${destino}.parcial" "${URL_RELEASE}/${nombre}" || return 1
+  if [ "$(huella "${destino}.parcial")" != "$esperada" ]; then
+    echo "${nombre}: la huella no coincide con la publicada."
+    rm -f "${destino}.parcial"
+    return 1
+  fi
+  mv -f "${destino}.parcial" "$destino"
+  echo "${nombre}: bajado y verificado."
+}
+
+# ============================================
+# Función   : paso_descarga
+# Propósito : Paso 1. El .deb y el paquete de la base, con su huella; abre
+#             el paquete de la base y saca del .deb el engine/ (sin root,
+#             con dpkg-deb -x: en una instalación nueva todavía no hay
+#             aplicación instalada)
+# Parámetros: $1 — carpeta de trabajo
+# Retorna   : 0 bien
+# ============================================
+paso_descarga() {
+  local trabajo="$1"
+
+  bajar "$DEB_NOMBRE" "$DEB_SHA" "$trabajo" || return 1
+  bajar "$BASE_NOMBRE" "$BASE_SHA" "$trabajo" || return 1
+  rm -rf "${trabajo}/base" "${trabajo}/deb"
+  mkdir -p "${trabajo}/base" "${trabajo}/deb"
+  tar -xzf "${trabajo}/${BASE_NOMBRE}" -C "${trabajo}/base" --strip-components=1 || return 1
+  dpkg-deb -x "${trabajo}/${DEB_NOMBRE}" "${trabajo}/deb" || return 1
+  [ -f "${trabajo}/deb/usr/share/gbpublisher/engine/integridad.sh" ] || { echo "El .deb no trae engine/integridad.sh."; return 1; }
+  [ -f "${trabajo}/base/configurar-conexion.sh" ] || { echo "El paquete de la base no trae configurar-conexion.sh."; return 1; }
+}
+
+# ============================================
+# Función   : paso_preparar_herramientas
+# Propósito : Paso 2. Controla las herramientas de /opt y baja lo que falte,
+#             sin contraseña (integridad.sh --preparar, SC-107)
+# Parámetros: $1 — carpeta de trabajo
+# Retorna   : el código de integridad.sh (0 o 3 bien)
+# ============================================
+paso_preparar_herramientas() {
+  local trabajo="$1" codigo
+
+  GBP_LLAMADO_POR=instalador bash "${trabajo}/deb/usr/share/gbpublisher/engine/integridad.sh" \
+    --preparar "${trabajo}/herramientas"
+  codigo=$?
+  # 3 ES «TERMINÓ CON AVISOS» (comun.sh, SC-53): NO ES UNA FALLA
+  [ "$codigo" -eq 0 ] || [ "$codigo" -eq 3 ]
+}
+
+# ============================================
+# Función   : paso_control_final
+# Propósito : Paso 8. La versión instalada, las herramientas y la conexión,
+#             como las va a usar la aplicación (usuario común)
+# Parámetros: $1 — carpeta de trabajo
+# Retorna   : 0 todo en orden
+# ============================================
+paso_control_final() {
+  local trabajo="$1" instalada faltan
+
+  instalada="$(dpkg-query -W -f='${Version}' gbpublisher 2>/dev/null)"
+  echo "Versión instalada: ${instalada}"
+  [ "${instalada%%-*}" = "$VERSION" ] || return 1
+
+  # MISMO CONTROL QUE EL MENÚ DE LA APLICACIÓN; SI TODO ESTÁ, NO BAJA NADA
+  rm -rf "${trabajo}/control"
+  GBP_LLAMADO_POR=instalador bash /usr/share/gbpublisher/engine/integridad.sh --preparar "${trabajo}/control" || true
+  faltan="$(grep -v '^$' "${trabajo}/control/componentes" 2>/dev/null)"
+  if [ -n "$faltan" ]; then
+    echo "Herramientas que no responden: ${faltan}"
+    return 1
+  fi
+  rm -rf "${trabajo}/control"
+
+  bash "${trabajo}/base/configurar-conexion.sh" --controlar || { echo "El archivo de conexión no abre una sesión."; return 1; }
+  echo "Conexión con la base: en orden."
+}
+
+# --- 3. FASE 1: COMO USUARIO COMÚN ---
+
+# NI root NI sudo: LOS ARCHIVOS DE LA CARPETA PERSONAL TIENEN QUE SER DEL
+# USUARIO, Y LA CONTRASEÑA LA PIDE pkexec EN SU VENTANA (SC-107)
+if [ "$(id -u)" -eq 0 ]; then
+  echo "No ejecute el instalador con sudo ni como administrador."
+  echo "Escriba, en una terminal:  bash instalador.sh"
+  exit 1
+fi
+
+# UN INSTALADOR SIN COMPLETAR (LA PLANTILLA) NO SE EJECUTA
+if [[ "$VERSION" == @* ]]; then
+  echo "Este archivo es la plantilla del instalador: se completa con distribucion/publicar.sh."
+  exit 1
+fi
+
+TRABAJO="${HOME}/gbpublisher-instalacion"
+LOG="${HOME}/gbpublisher-instalacion-$(date '+%Y%m%d-%H%M').log"
+: > "$LOG" || { echo "No se pudo crear el registro ${LOG}."; exit 1; }
+chmod 600 "$LOG"
+registrar "instalador ${VERSION} r${REVISION} (generado ${GENERADO}), esquema ${ESQUEMA}"
+registrar "$(uname -a)"
+trap detener INT TERM HUP
+
+# --- 3.1 LA BIENVENIDA ---
+clear 2>/dev/null || true
+echo
+echo "${NEGRITA}  Instalador de gbpublisher ${VERSION}${RESET}"
+echo "  ─────────────────────────────────────────────"
+echo
+echo "  Este instalador prepara esta computadora para usar gbpublisher:"
+echo "  la aplicación, las herramientas que usa y su base de datos."
+echo
+echo "  ${AMBAR}${NEGRITA}ANTES DE EMPEZAR, CIERRE GBPUBLISHER SI ESTÁ ABIERTO.${RESET}"
+echo
+echo "  Antes de seguir, lea el documento que explica qué hace este instalador:"
+echo
+echo "  ${AZUL}${URL_LEER}${RESET}"
+echo
+if ! preguntar "¿Lo leyó?"; then
+  echo
+  echo "  Léalo y vuelva a ejecutar el instalador: bash instalador.sh"
+  echo
+  registrar "CANCELADO: no leyó LEER-INSTALADOR.md"
+  exit 1
+fi
+
+# --- 3.2 LOS CONTROLES, SIN TOCAR NADA ---
+echo
+echo "${NEGRITA}  Controles${RESET}"
+
+# EL SISTEMA: LINUX MINT 22 (BASE UBUNTU 24.04, noble)
+(
+  . /etc/os-release 2>/dev/null
+  [ "${ID:-}" = "linuxmint" ] && [ "${UBUNTU_CODENAME:-}" = "noble" ]
+)
+if [ $? -eq 0 ]; then
+  ok "Sistema: $( (. /etc/os-release && echo "$PRETTY_NAME") )"
+elif [ "${GBP_ENSAYO_SISTEMA:-0}" = "1" ]; then
+  aviso "Sistema: $( (. /etc/os-release && echo "$PRETTY_NAME") ) (ensayo: no es Linux Mint 22)"
+elif (. /etc/os-release && [ "${ID:-}" = "linuxmint" ]); then
+  fallar "Este instalador fue probado solo en Linux Mint 22. Esta computadora tiene $( (. /etc/os-release && echo "$PRETTY_NAME") ), que todavía no fue probado." "controles: sistema" definitivo
+else
+  fallar "Este instalador funciona solo en Linux Mint 22 con Cinnamon." "controles: sistema" definitivo
+fi
+
+if [ "$(uname -m)" != "x86_64" ]; then
+  fallar "Este instalador funciona solo en computadoras de 64 bits (x86_64)." "controles: arquitectura" definitivo
+fi
+
+# LA CONFIGURACIÓN REGIONAL: SI NO ES UTF-8 SE FRENA, NO SE TOCA (GV-234)
+if [ "$(locale charmap 2>/dev/null)" = "UTF-8" ]; then
+  ok "Configuración de idioma: UTF-8"
+else
+  fallar "La configuración de idioma no es UTF-8. Corríjala como indica LEER-INSTALADOR.md, sección 6, y vuelva a ejecutar el instalador." "controles: idioma"
+fi
+
+# LA SESIÓN: NO FRENA, LA APLICACIÓN YA LO AVISA AL ARRANCAR
+if [ "${XDG_SESSION_TYPE:-x11}" = "x11" ]; then
+  ok "Sesión gráfica: X11"
+else
+  aviso "La sesión es ${XDG_SESSION_TYPE}: gbpublisher funciona en la sesión X11 de Cinnamon."
+fi
+
+# gbpublisher ABIERTO: SE FRENA, NO SE CIERRA SOLO (PUEDE HABER TRABAJO SIN
+# GUARDAR). EL EJECUTABLE ES UN SCRIPT DE gbr3: LA LÍNEA DE COMANDOS LLEVA
+# LA RUTA DE /usr/bin
+if pgrep -f '/usr/bin/gb[Pp]ublisher' >/dev/null 2>&1 || pgrep -x gbPublisher >/dev/null 2>&1; then
+  fallar "gbpublisher está abierto. Ciérrelo y vuelva a ejecutar el instalador." "controles: aplicación abierta"
+fi
+ok "gbpublisher está cerrado"
+
+# MariaDB: FRENA, NO SE INSTALA MySQL ENCIMA (GV-209). EL NOMBRE DEL PAQUETE
+# NO ALCANZA: mysqld --version DICE «MariaDB»
+if { [ -x /usr/sbin/mysqld ] && /usr/sbin/mysqld --version 2>/dev/null | grep -qi mariadb; } \
+   || dpkg-query -W -f='${Status}' mariadb-server 2>/dev/null | grep -q 'install ok installed'; then
+  fallar "Esta computadora tiene MariaDB. gbpublisher usa MySQL, y los dos no pueden convivir. Pase este mensaje al área de sistemas." "controles: MariaDB" definitivo
+fi
+
+command -v pkexec >/dev/null 2>&1 || fallar "Falta pkexec, que pide la contraseña en una ventana." "controles: pkexec"
+for comando in curl sha256sum dpkg-deb tar df; do
+  command -v "$comando" >/dev/null 2>&1 || fallar "Falta el programa «${comando}»." "controles: programas"
+done
+
+# LA CONEXIÓN: CUALQUIER RESPUESTA HTTP VALE; LO QUE SE MIDE ES QUE EL SITIO
+# SE ALCANCE
+sin_respuesta=()
+for sitio in "${SITIOS[@]}"; do
+  if ! curl -sS -o /dev/null --max-time 20 "$sitio" >> "$LOG" 2>&1; then
+    sin_respuesta+=("${sitio#https://}")
+  fi
+done
+if [ "${#sin_respuesta[@]}" -gt 0 ]; then
+  fallar "No responden: ${sin_respuesta[*]}. Verifique la conexión; en una red institucional, pase al área de sistemas la sección 7 de LEER-INSTALADOR.md." "controles: conexión"
+fi
+ok "Conexión: responden los ${#SITIOS[@]} sitios de descarga"
+
+# --- 3.3 EL DIAGNÓSTICO ---
+INSTALADA=""
+if dpkg-query -W -f='${Status}' gbpublisher 2>/dev/null | grep -q 'install ok installed'; then
+  INSTALADA="$(dpkg-query -W -f='${Version}' gbpublisher)"
+  INSTALADA="${INSTALADA%%-*}"
+fi
+if [ -z "$INSTALADA" ]; then
+  CASO="nueva"
+elif comparar "$INSTALADA" "$VERSION" lt; then
+  CASO="actualizacion"
+elif comparar "$INSTALADA" "$VERSION" eq; then
+  CASO="reparar"
+else
+  fallar "Esta computadora tiene gbpublisher ${INSTALADA}, más nuevo que este instalador (${VERSION}). El instalador nunca vuelve atrás una instalación: use el de la versión más reciente." "diagnóstico: versión más nueva" definitivo
+fi
+registrar "caso: ${CASO}; instalada: ${INSTALADA:-ninguna}"
+
+# EL ESPACIO, SEGÚN LO QUE HAYA QUE INSTALAR
+if [ "$CASO" = "nueva" ]; then minimo="$MINIMO_GB_NUEVA"; else minimo="$MINIMO_GB_ACTUALIZACION"; fi
+libre="$(df --output=avail -BG / | tail -n 1 | tr -dc '0-9')"
+libre_casa="$(df --output=avail -BG "$HOME" | tail -n 1 | tr -dc '0-9')"
+registrar "espacio libre: / ${libre} GB, carpeta personal ${libre_casa} GB"
+if [ "${libre:-0}" -lt "$minimo" ]; then
+  fallar "Hay ${libre} GB libres en el disco del sistema y hacen falta unos ${minimo}. Libere $((minimo - libre)) GB y vuelva a ejecutar el instalador." "controles: espacio"
+fi
+if [ "${libre_casa:-0}" -lt "$MINIMO_GB_CARPETA_PERSONAL" ]; then
+  fallar "Hay ${libre_casa} GB libres en su carpeta personal y hace falta al menos ${MINIMO_GB_CARPETA_PERSONAL}." "controles: espacio"
+fi
+ok "Espacio en disco: ${libre} GB libres"
+
+# --- 3.4 EL RESUMEN: LO QUE VA A PASAR EN ESTA COMPUTADORA ---
+echo
+echo "${NEGRITA}  Qué va a hacer el instalador${RESET}"
+echo
+case "$CASO" in
+  nueva)
+    echo "  gbpublisher no está instalado: se instala la versión ${VERSION}."
+    echo
+    echo "  - Agrega el repositorio de Gambas e instala gbpublisher con TeX Live"
+    echo "    completo. ${NEGRITA}Es el paso largo: se bajan varios gigabytes y puede llevar"
+    echo "    más de una hora.${RESET}"
+    echo "  - Instala en /opt las herramientas en versiones fijas."
+    echo "  - Instala MySQL si no está. Si ya hay una base de gbpublisher, la conserva"
+    echo "    y la lleva al esquema ${ESQUEMA}; si no, la crea."
+    echo "  - Crea el archivo con el que gbpublisher se conecta a la base."
+    ;;
+  actualizacion)
+    echo "  Esta computadora tiene gbpublisher ${INSTALADA}: se actualiza a ${VERSION}."
+    echo
+    echo "  - Actualiza gbpublisher y lo que necesita del sistema."
+    echo "  - Controla las herramientas de /opt e instala las que falten."
+    echo "  - Lleva la base al esquema ${ESQUEMA}. Cada cambio de la base hace antes"
+    echo "    un respaldo en ~/gbpublisher-respaldos/. Sus datos se conservan."
+    ;;
+  reparar)
+    echo "  Esta computadora ya tiene gbpublisher ${VERSION}: se ${NEGRITA}verifica y repara${RESET}."
+    echo
+    echo "  - Reinstala gbpublisher y lo que necesita del sistema."
+    echo "  - Controla las herramientas de /opt e instala las que falten."
+    echo "  - Controla la base y el archivo de conexión, y arregla lo que falte."
+    echo "    Sus datos se conservan."
+    ;;
+esac
+echo
+echo "  Se pide su contraseña una sola vez, en una ventana. ${NEGRITA}No cierre esta"
+echo "  ventana ni apague la computadora hasta que termine.${RESET}"
+echo
+if ! preguntar "¿Continúa?"; then
+  echo
+  echo "  No se hizo ningún cambio."
+  registrar "CANCELADO en el resumen"
+  exit 1
+fi
+
+# --- 3.5 PASOS 1 Y 2: LAS DESCARGAS, COMO USUARIO ---
+echo
+mkdir -p "$TRABAJO" || fallar "No se pudo crear ${TRABAJO}." "descarga"
+correr_paso 1 "Descarga de gbpublisher" paso_descarga "$TRABAJO" \
+  || fallar "No se pudo bajar gbpublisher." "1. Descarga de gbpublisher"
+correr_paso 2 "Descarga de las herramientas de producción" paso_preparar_herramientas "$TRABAJO" \
+  || fallar "No se pudieron bajar las herramientas de producción." "2. Descarga de las herramientas"
+
+# LA CONTRASEÑA NUEVA DE LA BASE: SOLO SI EL ARCHIVO DE CONEXIÓN NO ABRE UNA
+# SESIÓN (SC-106). LA GENERA configurar-conexion.sh, LA PONE EN MySQL LA FASE
+# DE root Y EL ARCHIVO SE ESCRIBE EN EL PASO 7
+CLAVE="-"
+if ! bash "${TRABAJO}/base/configurar-conexion.sh" --controlar >> "$LOG" 2>&1; then
+  CLAVE="${TRABAJO}/clave-nueva"
+  bash "${TRABAJO}/base/configurar-conexion.sh" --clave-nueva "$CLAVE" >> "$LOG" 2>&1 \
+    || fallar "No se pudo generar la contraseña de la base." "contraseña de la base"
+  registrar "se genera una contraseña nueva para ${DB_USER}"
+fi
+
+# --- 3.6 LA FASE DE root: UNA SOLA VENTANA ---
+echo
+echo "  ${AMBAR}➜ Se abre una ventana que pide su contraseña. Escríbala y acepte.${RESET}"
+echo
+registrar "fase de root: pkexec"
+pkexec /bin/bash "$SCRIPT" --fase-root "$TRABAJO" "$LOG" "$CASO" "$CLAVE"
+CODIGO=$?
+case "$CODIGO" in
+  0)   ;;
+  126) fallar "Se cerró la ventana de la contraseña. Para seguir, vuelva a ejecutar el instalador." "ventana de contraseña cerrada" ;;
+  127) fallar "No se obtuvo permiso de administrador. La contraseña tiene que ser la de un usuario administrador de esta computadora." "permiso de administrador" ;;
+  3)   fallar "No se pudo configurar el repositorio de Gambas." "3. Repositorio de Gambas" ;;
+  4)   fallar "No se pudo instalar gbpublisher." "4. Instalación de gbpublisher y TeX Live" ;;
+  5)   fallar "No se pudieron instalar las herramientas de producción." "5. Herramientas de producción" ;;
+  6)   fallar "No se pudo preparar la base de datos." "6. Base de datos" ;;
+  9)   fallar "La base de datos de esta computadora no se puede actualizar con este instalador (el motivo está arriba)." "base: esquema" definitivo ;;
+  *)   fallar "La parte de administrador terminó con el código ${CODIGO}." "fase de administrador" ;;
+esac
+
+# --- 3.7 PASOS 7 Y 8, COMO USUARIO ---
+if [ "$CLAVE" != "-" ]; then
+  correr_paso 7 "Archivo de conexión" bash "${TRABAJO}/base/configurar-conexion.sh" --escribir "$CLAVE" \
+    || fallar "No se pudo escribir el archivo de conexión." "7. Archivo de conexión"
+  rm -f "$CLAVE"
+else
+  correr_paso 7 "Archivo de conexión" bash "${TRABAJO}/base/configurar-conexion.sh" --controlar \
+    || fallar "El archivo de conexión no abre una sesión en la base." "7. Archivo de conexión"
+fi
+correr_paso 8 "Control final" paso_control_final "$TRABAJO" \
+  || fallar "El control final encontró un problema." "8. Control final"
+
+# --- 3.8 EL CIERRE ---
+registrar "TERMINADO"
+echo
+case "$CASO" in
+  nueva)         echo "  ${VERDE}${NEGRITA}gbpublisher ${VERSION} quedó instalado.${RESET}" ;;
+  actualizacion) echo "  ${VERDE}${NEGRITA}gbpublisher quedó actualizado a ${VERSION}.${RESET}" ;;
+  reparar)       echo "  ${VERDE}${NEGRITA}gbpublisher ${VERSION} quedó verificado y en orden.${RESET}" ;;
+esac
+echo
+echo "  Ábralo desde el menú de aplicaciones: gbpublisher."
+echo "  Registro de esta instalación: ${LOG}"
+if [ "$CASO" = "nueva" ]; then
+  echo
+  echo "  ${AMBAR}${NEGRITA}PRIMER ACCESO AL PANEL DE ADMINISTRACIÓN: USUARIO admin, CONTRASEÑA admin123."
+  echo "  ESTOS DATOS SON PÚBLICOS: CUALQUIERA QUE LEA ESTE MENSAJE O LA DOCUMENTACIÓN"
+  echo "  LOS CONOCE. CAMBIE LA CONTRASEÑA APENAS ENTRE POR PRIMERA VEZ.${RESET}"
+fi
+echo
+read -r -p "  Pulse Enter para cerrar. " _ || true
+exit 0

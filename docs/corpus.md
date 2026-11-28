@@ -893,7 +893,7 @@ INSTALACIONES PREVIAS
 
 **Relaciones:** vinculo:SC-05,vinculo:SC-24,vinculo:SC-34,vinculo:SC-35,vinculo:GV-77,vinculo:SC-96,vinculo:SC-75,vinculo:SC-97,vinculo:SC-17,vinculo:SC-21,vinculo:SC-51,vinculo:SC-106
 
-**PENDIENTE:** Correr limpiar-gbpublisher-local.sh --aplicar en cada instalación que todavía tenga las carpetas copiadas.
+**PENDIENTE:** Correr limpiar-gbpublisher-local.sh --aplicar en la máquina que está en 1.34, la única instalación con las carpetas copiadas, y después borrar el script del repositorio. El instalador no lo llama (SC-107).
 
 ### SC-12 — Editor de bibliografia: el formato de trabajo es HTML, no RTF
 
@@ -1392,7 +1392,17 @@ SIN PREGUNTAS (2.0.0 EN ADELANTE)
 
 Con `GBP_SIN_PREGUNTAS=1`, los scripts 2.x no piden escribir `SI`: la confirmación ya la pidió quien los llama (el instalador, SC-107). Sin la variable preguntan como siempre. Los mensajes de esos seis scripts pasan a español neutro, con usted. Probado: la cadena completa sin entrada (`</dev/null`), y la pregunta con «no» (cancela) y con «SI» (aplica).
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90,vinculo:SC-102,vinculo:GV-217,vinculo:SC-104,vinculo:SC-108,apoya:GV-224,apoya:GV-235,vinculo:SC-107
+LOS NÚMEROS DE VERIFICACIÓN DEL BASELINE (27/11/2026)
+
+`generar-baseline.sh` escribe en el encabezado `-- Verificación: tablas=N` y una línea `-- Verificación: semilla <tabla>=<filas>` por tabla semilla. Los cuenta en el propio volcado: `CREATE TABLE` más `esquema_version`, y un `INSERT` por fila (`--skip-extended-insert`). Con `-v` compara la carga contra esos números.
+
+El instalador verifica la carga contra el encabezado, y `publicar.sh` no publica un baseline sin él. Antes, los números estaban escritos a mano en `instalar-gbpublisher.sh`, que se retira (SC-107).
+
+El baseline 2.0.0 los recibió a mano, contados en el mismo archivo: 68 tablas, y `manual_ayudas` 36, `consultas` 82, `cmb_biblatex` 120, `bibtex_campo_catalogo` 105, `formatos_pdf` 45, `credit_roles` 14, `credit_rol_nombre` 28, `idiomas` 386, `pais` 249, `licencias` 19, `licencia_texto` 6 y `tipo_declaracion` 3. Son los mismos que tenía el script retirado. El resto del archivo no cambia.
+
+Probado en el contenedor: el generador sobre una base 2.0.0 escribió los números y la carga con `-v` coincidió.
+
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90,vinculo:SC-102,vinculo:GV-217,vinculo:SC-104,vinculo:SC-108,apoya:GV-224,apoya:GV-235,vinculo:SC-107,vinculo:SC-107
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -5861,7 +5871,9 @@ PROBADO EN MINT por Alberto (19/11/2026, MySQL 8): sin la 1.34.0, la aplicación
 
 DESDE SC-106 (25/11/2026). La credencial ya no se escribe en un temporal. `mysqldump` recibe el archivo de conexión del usuario, `~/.gbpublisher/conexion.conf` (600), con `--defaults-extra-file`, y de ahí salen el usuario y la contraseña. Sin ese archivo no se respalda y no se avisa: el aviso lo da el inicio de sesión.
 
-**Relaciones:** apoya:GV-214,vinculo:SC-22,vinculo:SC-81,vinculo:GV-67,vinculo:SC-106
+LOS PERMISOS QUE DA EL INSTALADOR (27/11/2026, SC-107). Cierra «queda para el bloque de credenciales»: el instalador crea `app_user@localhost` con `SELECT, INSERT, UPDATE, DELETE, SHOW VIEW` sobre `gbpublisher`. Son los que tiene la cuenta en la máquina de trabajo de Alberto, donde la aplicación funciona, más el `SHOW VIEW` de la 1.34.0. Sin `TRIGGER`, a propósito. A una cuenta que ya existe no le cambia los permisos: las instalaciones anteriores pueden seguir con `ALL PRIVILEGES`.
+
+**Relaciones:** apoya:GV-214,vinculo:SC-22,vinculo:SC-81,vinculo:GV-67,vinculo:SC-106,vinculo:SC-107
 
 ### SC-102 — La bibliografía en entrada y pares campo/valor: bibtex, bibtex_campo y el catálogo de campos de biblatex (actualización y baseline 2.0.0)
 
@@ -6159,9 +6171,21 @@ PROBADO EN MINT (Alberto, 25/11/2026; Linux Mint 22, Gambas 3.22.2, MySQL 8.0):
 
 AJUSTE DEL MISMO DÍA. El aviso de copiar el archivo a otras máquinas sale solo si el servidor tiene cuentas `app_user` de red, además de la de `localhost`. Con solo `localhost` era ruido. La parte de root lo informa con la salida 4 (0 = solo `localhost`). Probado en el contenedor con y sin una cuenta de red. Probado también el caso de un servidor apagado: la salida es 3, con el mensaje de MySQL.
 
-**Relaciones:** vinculo:SC-81,vinculo:SC-101,apoya:GV-222,apoya:GV-223,vinculo:GV-151,vinculo:GV-206,vinculo:SC-107
+EL INSTALADOR (27/11/2026, SC-107)
 
-**PENDIENTE:** Probar en Mint: las notas, que abren su propia conexión (AbrirConexionSondeo), y cerrar la ventana de pkexec con la X (código 126).
+`configurar-conexion.sh` suma tres modos para el instalador, que pide una sola contraseña en toda la instalación y por eso no puede usar el flujo normal (que abre su propia ventana de pkexec):
+
+- `--controlar`: sale con 0 si el archivo existe y abre una sesión; no escribe nada. Sin cliente `mysql` (una máquina nueva) sale con 1.
+- `--clave-nueva <archivo>`: genera la contraseña en un archivo 600.
+- `--escribir <archivo>`: escribe el archivo de conexión con esa contraseña, que la fase de root del instalador ya puso en MySQL con `--root`, y verifica la sesión.
+
+La generación de la contraseña y la escritura del archivo pasan a dos funciones (`generar_clave`, `escribir_conf`) que usan el flujo normal y los modos nuevos: el formato sigue en un solo lugar. El flujo normal no cambia (probado: creación con la ventana, segunda corrida que no toca nada).
+
+`instalar-gbpublisher.sh` se retira (SC-107): corrige lo que esta entrada dice de él y de `--con-sudo`, que queda como opción para correr el script a mano sin sesión gráfica. El mensaje de `m_ConexionBD.PrepararConexion` sin archivo, o con el archivo incompleto, ahora pide volver a ejecutar el instalador (`bash instalador.sh`), que verifica y repara, en lugar de correr `configurar-conexion.sh` desde una carpeta que la persona no tiene. Pasa a español neutro.
+
+**Relaciones:** vinculo:SC-81,vinculo:SC-101,apoya:GV-222,apoya:GV-223,vinculo:GV-151,vinculo:GV-206,vinculo:SC-107,vinculo:SC-107
+
+**PENDIENTE:** Cerrar la ventana de pkexec con la X (código 126): se prueba con el instalador en la notebook (SC-107).
 
 ### SC-107 — El instalador: instalador.sh versionado contra el .deb, sin sudo y con pkexec, para usuarios sin formación técnica que instalan solos
 
@@ -6306,15 +6330,94 @@ LAS PIEZAS QUE YA ESTÁN (27/11/2026)
 - **En una instalación nueva**, `integridad.sh` se toma del `.deb` ya descargado, con `dpkg-deb -x` y sin root: todavía no hay aplicación instalada.
 - **Español neutro:** `integridad.sh`, `instalar_packtools.sh`, `configurar-conexion.sh`, `limpiar-gbpublisher-local.sh` y los seis scripts 2.x.
 
-**Relaciones:** vinculo:SC-95,vinculo:SC-106,vinculo:SC-22,vinculo:GV-206,vinculo:GV-209,vinculo:SC-81,vinculo:GV-234,apoya:GV-235
+CORRECCIONES DEL MISMO DÍA (Alberto, 27/11/2026, al implementar)
 
-**PENDIENTE:** Implementar, en este orden:
-1. publicar.sh en el repositorio, con la plantilla del instalador y su generador: versión y huellas del .deb y del paquete de la base, el esquema exigido, las notas de la release con la línea para pegar, y el control de repositorio limpio y empujado.
-2. El instalador: verificar en el .deb la ruta de engine/integridad.sh para dpkg-deb -x.
-3. El formulario de issues.
-4. El artículo del blog sobre la cuenta de GitHub; su enlace reemplaza @ENLACE_ARTICULO_GITHUB@ en LEER-INSTALADOR.md.
+- **El instalador se llama siempre `instalador.sh`.** Corrige «`instalador-X.Y.Z.sh`» y «una revisión `-rN`, nunca reemplazando el archivo publicado» de CÓMO LLEGA. Con un nombre fijo, GitHub da una dirección que siempre apunta al de la última versión: `releases/latest/download/instalador.sh` (documentado en «Linking to releases» de GitHub). `LEER-INSTALADOR.md` lleva esa línea y ninguna marca de versión. Las notas de cada versión llevan la línea de esa versión (`releases/download/vX/instalador.sh`), para que una nota vieja siga instalando su versión. Una revisión reemplaza `instalador.sh` en la misma versión (`gh release upload --clobber`) y lleva su número adentro, que queda en el registro.
+- **`instalar-gbpublisher.sh` se retira.** Hacía lo mismo que la fase de base del instalador: un script llama a otro solo si hacen cosas distintas (criterio de Alberto). Su modo servidor (`-r RANGO`, la cuenta de red, el aviso de `bind-address`) no pasa al instalador: la instalación con servidor se documenta aparte, porque aun en la red de una universidad cada puesto pasa por la instalación local. El instalador nunca borra una base: si existe, la conserva.
+- **`limpiar-gbpublisher-local.sh` sale del instalador y del paquete de la base.** Corrige el punto 1 de LO QUE SE ACORDÓ DESPUÉS y «Actualización: corre limpiar…» de LA PRESENTACIÓN. Solo lo necesita la máquina de Alberto que está en 1.34; no hay otras instalaciones. Después se borra (SC-11).
+- **El registro** es `~/gbpublisher-instalacion-AAAAMMDD-HHMM.log`, uno por corrida (ya decidido en LA PRESENTACIÓN; corrige REGISTRO Y SOPORTE).
+- **El paquete de la base** lleva el baseline más alto, todos los `actualizar-esquema-*.sh` y `configurar-conexion.sh`, bajo una carpeta `gbpublisher-base-X.Y.Z/`. Se arma con `tar` de orden, fecha y dueño fijos: el mismo contenido da el mismo archivo (medido).
 
-Después: la tanda de Mint 23 y el modo compartido (Eduvim).
+LO IMPLEMENTADO (27/11/2026)
+
+`distribucion/instalador.sh.in`, la plantilla. Marcas: `@VERSION@`, `@REVISION@`, `@DEB_NOMBRE@`, `@DEB_SHA@`, `@BASE_NOMBRE@`, `@BASE_SHA@`, `@ESQUEMA@`, `@BASELINE@`, `@GENERADO@`. La plantilla sin completar se niega a correr.
+
+- **Fase 1, usuario:**
+  - se niega a correr como root;
+  - la bienvenida y «¿Lo leyó?»;
+  - los controles: Linux Mint con base `noble`, x86_64, locale UTF-8, sesión X11 (solo aviso), gbpublisher abierto (`pgrep -f /usr/bin/gb[Pp]ublisher`: el ejecutable es un script de `gbr3`), MariaDB (`mysqld --version`, GV-209), pkexec, y que respondan los nueve sitios de descarga (cualquier respuesta HTTP vale);
+  - el caso por la versión del paquete instalado: nueva, actualización, reparar, o más nueva (frena);
+  - el espacio libre: 12 GB en una instalación nueva y 3 en las demás, más 1 GB en la carpeta personal. Son estimaciones: cada registro anota el espacio antes y después de apt, para ajustarlas;
+  - el resumen del caso y «¿Continúa?»;
+  - paso 1: el `.deb` y el paquete de la base a `~/gbpublisher-instalacion/`, con su huella. Toma los que estén junto al instalador si su huella coincide, y no repite una descarga ya verificada. Abre el paquete de la base y saca `engine/` del `.deb` con `dpkg-deb -x` (en el `.deb`, `.hidden/engine` queda en `/usr/share/gbpublisher/engine`, 49 archivos, uno a uno);
+  - paso 2: `integridad.sh --preparar` del `.deb` descomprimido;
+  - la contraseña nueva, solo si `configurar-conexion.sh --controlar` falla (SC-106).
+- **Fase 2, root, con pkexec** (el mismo archivo con `--fase-root`):
+  - usuario y carpeta personal desde `PKEXEC_UID` (GV-235);
+  - copia lo bajado a una carpeta de root y vuelve a verificar las huellas;
+  - ANTES de tocar nada mira la base: si existe y no tiene `baseline-2.0.0` ni `actualizacion-2.0.0`, frena; si tiene un esquema más nuevo que el del instalador, frena. En los dos casos no cambió nada (medido con una base 1.34);
+  - paso 3: repara un dpkg interrumpido (`dpkg --configure -a`), renombra con `.gbpublisher-deshabilitado` todo otro archivo de `sources.list.d` que nombre a Gambas, escribe `home:gambas:stable.list` y la clave en `/etc/apt/trusted.gpg.d/home_gambas_stable.gpg` con los mismos nombres de las instrucciones oficiales de Gambas (una máquina configurada a mano queda igual, sin duplicados), y `apt-get update`. La línea es `http://`, como en esas instrucciones: apt verifica la firma;
+  - paso 4: `apt-get install` del `.deb` (con `--reinstall` al reparar) y de `mysql-server` si falta; después `apt-get clean`, porque `apt-get` guarda los paquetes bajados;
+  - paso 5: `integridad.sh --instalar` del instalado, con la lista de `componentes`;
+  - paso 6: MySQL en marcha; la base desde el baseline si no existe, verificada con los números de su encabezado (SC-22); `app_user@localhost` si falta, con los permisos de SC-101; cada script 2.x que falte, en orden, con `GBP_SIN_PREGUNTAS=1` y `GBP_DIR_RESPALDOS` en la carpeta del usuario; el control de que quedó en el esquema exigido; y `configurar-conexion.sh --root` si hay contraseña nueva.
+  - Sale con el número del paso que falló (3 a 6), o 9 si la base no se puede actualizar desde acá.
+- **Fase 3, usuario:** paso 7, `configurar-conexion.sh --escribir` (o `--controlar` si no hubo contraseña nueva); paso 8, la versión instalada, `integridad.sh --preparar` sin nada que bajar y la conexión.
+- **El cierre:** qué quedó, cómo abrirlo, el registro y, en una instalación nueva, el aviso en mayúsculas de `admin`/`admin123`.
+- **Ante un error:** el motivo, las últimas líneas del registro, «vuelva a ejecutar el instalador» y el enlace al formulario con versión, sistema y paso. Con un motivo que repetir no arregla (sistema, MariaDB, base 1.x, versión más nueva) no aconseja repetir.
+- **El avance:** cada paso de fondo, en su propio grupo de procesos, con la entrada desde `/dev/null` (GV-236).
+
+`.github/ISSUE_TEMPLATE/instalador.yml`: el formulario. Los campos `version`, `sistema` y `paso` se completan desde la dirección; GitHub permite llenar así los campos de texto de un formulario. La etiqueta `instalador` se aplica solo si existe en el repositorio.
+
+`distribucion/publicar.sh` reemplaza al de `~/Dropbox/ubuntu`, que se borra junto con su `release.txt`.
+
+- **Toma** el único `.deb` de `~/Dropbox/ubuntu` (o de `GBP_DIR_DEB`) y las notas de `distribucion/release.txt`, que ahora está en el repositorio.
+- **Frena si:**
+  - la versión del `.deb` no es la de `.project`;
+  - el `engine/` del `.deb` no es igual, archivo por archivo, a los archivos de `.hidden/engine` que sigue git, o trae alguno que git no sigue (medido: el `.deb` 0.0.454 tiene el `integridad.sh` anterior al lote de act-144, y frena);
+  - el baseline no declara sus números de verificación;
+  - fuera de `--ensayo`, el repositorio tiene cambios sin commit o no está empujado, o la etiqueta ya existe.
+- **Arma** el paquete de la base y el instalador; controla que no queden marcas y la sintaxis (`bash -n`); agrega a las notas el esquema exigido y la línea para pegar de esa versión.
+- **Publica** con `gh release create … --target <commit>`: la etiqueta queda en el commit controlado.
+- **`--ensayo <carpeta>`** deja todo en una carpeta, sin etiquetar ni subir, para probar en otra máquina.
+- **`--revision <N>`** baja el `.deb` y el paquete de la base publicados, exige que el `.deb` de Dropbox sea el mismo, y reemplaza solo `instalador.sh`.
+
+`generar-baseline.sh` escribe en el encabezado los números de verificación (SC-22).
+
+PROBADO EN EL CONTENEDOR (27/11/2026, Ubuntu 24.04, MySQL 8.0.46, sin systemd). Con un pkexec simulado (sudo con `PKEXEC_UID` y sin `SUDO_USER`) y un `.deb` 0.0.454 rearmado con el `engine/` de este lote y sin `texlive-full`, `chromium` ni `calibre`: el contenedor no tiene snap, y `chromium` en Ubuntu lo necesita.
+
+- **`publicar.sh`:**
+  - con el `.deb` original frena por `engine/`;
+  - frena con el repositorio sucio, sin empujar o con la etiqueta usada;
+  - `--ensayo` arma la carpeta;
+  - el paquete de la base sale igual dos veces.
+- **El instalador desde la carpeta del ensayo:**
+  - instalación nueva completa, sin base ni `app_user`: los 8 pasos;
+    - Gambas 3.22.2 del repositorio estable;
+    - vnu instalado en `/opt`;
+    - la base desde el baseline, con sus 68 tablas verificadas;
+    - el esquema hasta la 2.5.0, con los respaldos en la carpeta del usuario y a su nombre;
+    - `app_user` con `SELECT, INSERT, UPDATE, DELETE, SHOW VIEW`;
+    - el archivo de conexión 600;
+    - nada de root en la carpeta personal;
+  - segunda corrida, que repara: reinstala el paquete y no cambia la base;
+  - reparación con la clave del archivo equivocada: genera una nueva y la conexión vuelve a andar;
+  - una base 1.34, que frena antes de tocar nada (apt sin cambios);
+  - sin conexión a los sitios, que frena con el enlace al formulario ya completado.
+- **Ctrl+C por la terminal** detiene el paso de fondo (GV-236).
+
+Sin probar en el contenedor:
+- packtools: el proxy rechaza la descarga de GitHub (403). En la prueba se simuló.
+- pkexec real, Mint, TeX Live y chromium.
+
+**Relaciones:** vinculo:SC-95,vinculo:SC-106,vinculo:SC-22,vinculo:GV-206,vinculo:GV-209,vinculo:SC-81,vinculo:GV-234,apoya:GV-235,apoya:GV-236,vinculo:SC-101,vinculo:SC-11
+
+**PENDIENTE:** Probar en la notebook (Mint 22 sin gbpublisher), con la carpeta de publicar.sh --ensayo y un .deb regenerado:
+1. Instalación nueva completa, con pkexec real: la ventana, la salida de root en la terminal, cerrar la ventana con la X (126), y que llegue PKEXEC_UID y no SUDO_USER (GV-235).
+2. TeX Live: tiempo, espacio antes y después (ajustar MINIMO_GB_NUEVA) y la animación en un paso largo.
+3. gbpublisher abierto detectado (pgrep -f /usr/bin/gb[Pp]ublisher) y Ctrl+C a mitad de apt, y la corrida siguiente que repara.
+4. Segunda corrida: verificar y reparar.
+
+Después: el artículo del blog sobre la cuenta de GitHub, cuyo enlace reemplaza @ENLACE_ARTICULO_GITHUB@ en LEER-INSTALADOR.md; la etiqueta «instalador» en el repositorio; la tanda de Mint 23; la instalación con servidor, documentada aparte (Eduvim).
 
 ### SC-108 — Crossref para libros: el XML de depósito desde el canónico y la base, con el DOI del libro obligatorio y el registro manual del depósito
 
@@ -11950,6 +12053,33 @@ Todo script que se corre con `sudo` o `pkexec` y escribe para la persona (respal
 **Relaciones:** vinculo:SC-22,vinculo:SC-107,vinculo:GV-206
 
 **PENDIENTE:** Medir con pkexec real en Mint que PKEXEC_UID llega y SUDO_USER no: será en la primera prueba del instalador.
+
+### GV-236 — bash con set -m en un script: el trabajo de fondo va a su propio grupo y Ctrl+C se lo puede matar entero, pero si toca la terminal queda detenido (SIGTTOU); con la entrada desde /dev/null no
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** bash 5.2 / Ubuntu 24.04 (contenedor) / script de util-linux como terminal / apt-get 2.8 · **Verificado:** 2026-11
+
+Medido el 27/11/2026 en el contenedor (Ubuntu 24.04, bash 5.2), con el instalador corriendo en una terminal simulada (`script`).
+
+PARA QUÉ SE USA
+
+El instalador corre cada paso de fondo para animar el avance mientras tanto (SC-107). Para que Ctrl+C o cerrar la ventana detengan todo el paso (apt, dpkg y sus hijos), el paso tiene que estar en su propio grupo de procesos y la trampa lo mata con `kill -TERM -- -<pid>`. En un script, eso se logra con `set -m` antes de lanzarlo: con el control de trabajos activo, cada trabajo de fondo tiene su grupo.
+
+LA TRAMPA
+
+Un grupo de fondo que toca la terminal recibe SIGTTOU (o SIGTTIN) y queda detenido. `apt-get install` quedó en estado `T` (`do_signal_stop`) al terminar de configurar los paquetes: la entrada estándar heredada era la terminal. El paso no terminaba nunca y la animación seguía.
+
+Con la entrada desde `/dev/null` (`"$@" < /dev/null >> registro 2>&1 &`) el mismo `apt-get` terminó bien. La salida va a un archivo, así que tampoco escribe en la terminal.
+
+Ctrl+C
+
+- Enviado por la terminal (el carácter 0x03 por la terminal simulada): la trampa del script corre y el `sleep 300` del paso, en su grupo, muere. Medido.
+- `kill -INT` al proceso del script, en cambio, no dispara la trampa mientras el script espera a un hijo en primer plano: bash espera a ver si el hijo también murió por SIGINT. Una prueba de Ctrl+C se hace por la terminal, no con `kill -INT`. `kill -TERM` sí la dispara.
+
+CONSECUENCIA
+
+Todo paso de fondo de un script con `set -m` lleva la entrada desde `/dev/null`.
+
+**Relaciones:** apoya:SC-107
 
 ---
 

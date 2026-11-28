@@ -1,7 +1,5 @@
 # Cómo se instala gbpublisher
 
-**Versión del instalador: @VERSION@**
-
 Lea este documento completo antes de ejecutar el instalador. Lo primero que el instalador le pregunta es si lo leyó; si responde que no, se detiene y le pide que lo lea.
 
 Este documento explica:
@@ -34,14 +32,14 @@ Necesita:
 2. Copie esta línea completa:
 
    ```
-   curl -fsSLo instalador.sh https://github.com/albertomoyano/gbpublisher/releases/download/v@VERSION@/instalador-@VERSION@.sh && bash instalador.sh
+   curl -fsSLo instalador.sh https://github.com/albertomoyano/gbpublisher/releases/latest/download/instalador.sh && bash instalador.sh
    ```
 
 3. Péguela en la terminal: haga clic con el **botón derecho** del mouse dentro de la terminal, elija **Pegar** y pulse **Enter**.
 
 No escriba `sudo` delante: el instalador le pide la contraseña cuando la necesita, en una ventana aparte.
 
-La línea descarga el archivo `instalador.sh` en su carpeta personal y lo ejecuta. El archivo queda ahí: si la instalación se corta, vuelva a abrir una terminal y escriba `bash instalador.sh`. El instalador retoma desde donde había quedado.
+La línea descarga el instalador de la última versión de gbpublisher, `instalador.sh`, en su carpeta personal y lo ejecuta. El archivo queda ahí: si la instalación se corta, vuelva a abrir una terminal y escriba `bash instalador.sh`. El instalador retoma desde donde había quedado.
 
 ---
 
@@ -66,9 +64,10 @@ Cada control termina con una marca: ✔ (bien), ⚠ (aviso, se puede seguir) o �
 **Los pasos.** Cada paso aparece numerado. Mientras trabaja, al lado se ve el tiempo transcurrido y una barra que va y viene. La barra no mide cuánto falta: solo muestra que la computadora sigue trabajando. Cuando el paso termina, queda la palabra **ok**:
 
 ```
-[1/8] Repositorio de Gambas ............................... ok
-[2/8] Descarga de gbpublisher ............................. ok
-[3/8] Instalación de gbpublisher y TeX Live  12:47  ====
+[1/8] Descarga de gbpublisher ................................... ok
+[2/8] Descarga de las herramientas de producción ................ ok
+[3/8] Repositorio de Gambas ..................................... ok
+[4/8] Instalación de gbpublisher y TeX Live  12:47      ====
 ```
 
 El paso de TeX Live es el más largo, y es normal que la barra siga yendo y viniendo durante mucho tiempo.
@@ -79,8 +78,8 @@ El paso de TeX Live es el más largo, y es normal que la barra siga yendo y vini
 
 ## 4. Qué hace en su computadora
 
-1. **Agrega el repositorio oficial de Gambas.** Gambas es el lenguaje en que está escrito gbpublisher. La versión que trae Linux Mint es vieja y no alcanza. El instalador agrega el canal estable del equipo de Gambas, publicado en el servicio de openSUSE (`home:gambas:stable`). Si su computadora tenía otro Gambas, lo reemplaza: no pueden convivir dos.
-2. **Descarga gbpublisher** y verifica que el archivo sea exactamente el publicado, con su huella digital.
+1. **Descarga gbpublisher** y verifica que el archivo sea exactamente el publicado, con su huella digital. Lo guarda en `~/gbpublisher-instalacion/`, junto con las herramientas que haya que instalar: si la instalación se corta, no se vuelve a descargar.
+2. **Agrega el repositorio oficial de Gambas.** Gambas es el lenguaje en que está escrito gbpublisher. La versión que trae Linux Mint es vieja y no alcanza. El instalador agrega el canal estable del equipo de Gambas, publicado en el servicio de openSUSE (`home:gambas:stable`), como indican las instrucciones oficiales de Gambas. Si su computadora tenía otro repositorio de Gambas, lo deshabilita: no pueden convivir dos.
 3. **Instala gbpublisher y lo que necesita del sistema:** TeX Live completo, Java, Python y las bibliotecas de Qt.
 4. **Instala en `/opt` las herramientas que deciden el resultado de una salida,** en versiones fijas:
    - Pandoc 3.1.3;
@@ -98,10 +97,8 @@ El paso de TeX Live es el más largo, y es normal que la barra siga yendo y vini
 
 ### Si ya tenía gbpublisher
 
-- **Versión anterior:** el instalador actualiza.
-  1. Antes de tocar la base, hace un respaldo completo en `~/gbpublisher-respaldos/`.
-  2. Después aplica los cambios de la base que correspondan a la versión nueva.
-  3. También limpia la carpeta `~/.gbpublisher`, de la que saca las copias viejas de recursos que las versiones anteriores dejaban ahí, también con respaldo previo. Sus preferencias, su archivo de conexión y sus archivos propios no se tocan.
+- **Versión anterior:** el instalador actualiza gbpublisher y aplica los cambios de la base que correspondan a la versión nueva. Cada cambio de la base hace antes un respaldo completo en `~/gbpublisher-respaldos/`. Sus datos, sus preferencias y su archivo de conexión se conservan.
+- **Una base de datos anterior a la 2.0.0:** el instalador se detiene sin cambiar nada. Esa base se actualiza a mano; pida ayuda con el formulario de la sección 6.
 - **La misma versión:** el instalador ofrece **verificar y reparar**. Revisa todo y arregla lo que falte o esté roto. Es lo primero que conviene hacer si gbpublisher deja de funcionar bien.
 - **Una versión más nueva que la de este instalador:** el instalador se detiene. Nunca vuelve atrás una instalación.
 
@@ -109,7 +106,7 @@ El paso de TeX Live es el más largo, y es normal que la barra siga yendo y vini
 
 ## 5. Decisiones que se tomaron y por qué
 
-- **Un instalador por versión.** Cada versión de gbpublisher publica su propio instalador. Así, el instalador, este documento y la aplicación siempre coinciden, y quien da soporte sabe exactamente qué tiene instalado cada persona.
+- **Un instalador por versión.** Cada versión de gbpublisher publica su propio instalador, con la versión y la huella de lo que instala escritas adentro. La línea de la sección 2 descarga siempre el de la última versión. Así, el instalador y la aplicación siempre coinciden, y quien da soporte sabe exactamente qué tiene instalado cada persona: el registro lo dice.
 - **Sin `sudo` y con una sola contraseña.** La contraseña se pide en una ventana gráfica y una sola vez. En la terminal, `sudo` no muestra lo que se escribe y muchas personas creen que se colgó.
 - **La base de datos es MySQL.** gbpublisher se desarrolla, se prueba y se usa con MySQL.
 - **Base local.** Esta versión del instalador prepara una computadora con su propia base de datos. El uso compartido por varias computadoras o personas se documenta aparte y lo configura el área de sistemas.
@@ -144,11 +141,11 @@ Abra ese enlace, adjunte el archivo de registro y envíe el reporte. Para usar e
 
 ## 7. Para el área de sistemas
 
-**Sitios a los que se conecta el instalador** (todos por HTTPS):
+**Sitios a los que se conecta el instalador.** Todos por HTTPS, salvo el repositorio de Gambas, que se lee por HTTP como indican sus instrucciones oficiales: apt verifica la firma de cada paquete.
 
 | Sitio | Para qué |
 |---|---|
-| `github.com`, `objects.githubusercontent.com`, `raw.githubusercontent.com`, `codeload.github.com` | gbpublisher, su instalador, Pandoc, Saxon-HE, epubcheck y packtools |
+| `github.com`, `release-assets.githubusercontent.com`, `raw.githubusercontent.com`, `codeload.github.com` | gbpublisher, su instalador, Pandoc, Saxon-HE, epubcheck y packtools |
 | `download.opensuse.org` (y los espejos a los que redirige) | El repositorio de Gambas |
 | `registry.npmjs.org` | vnu |
 | `software.verapdf.org` | veraPDF |
@@ -161,7 +158,9 @@ Abra ese enlace, adjunte el archivo de registro y envíe el reporte. Para usar e
 |---|---|
 | La aplicación | El paquete `gbpublisher`: sus recursos en `/usr/share/gbpublisher` y el acceso en el menú de aplicaciones |
 | Las herramientas en versiones fijas | `/opt` |
-| La lista del repositorio de Gambas | `/etc/apt/sources.list.d/` y su clave en `/etc/apt/keyrings/` |
+| El repositorio de Gambas | `/etc/apt/sources.list.d/home:gambas:stable.list` y su clave en `/etc/apt/trusted.gpg.d/home_gambas_stable.gpg`. Otro repositorio de Gambas que hubiera queda con la terminación `.gbpublisher-deshabilitado` |
+| Lo descargado por el instalador | `~/gbpublisher-instalacion/` (se puede borrar cuando terminó bien) |
+| El registro de cada ejecución | `~/gbpublisher-instalacion-AAAAMMDD-HHMM.log` |
 | La base de datos | MySQL, base `gbpublisher`, cuenta `app_user@localhost` |
 | Los datos del usuario | `~/.gbpublisher/` (preferencias y `conexion.conf`, con permisos 600) |
 | Los respaldos de la base | `~/gbpublisher-respaldos/` y `~/.gbpublisher/respaldo/` |

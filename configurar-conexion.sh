@@ -9,11 +9,19 @@
 #             en el código: sin el archivo, la aplicación no se conecta.
 # Uso       : bash configurar-conexion.sh              (SIN sudo)
 #             bash configurar-conexion.sh --con-sudo   pide permiso con sudo
-#                                                      y no con pkexec (lo
-#                                                      usa instalar-gbpublisher.sh,
-#                                                      que ya lo tiene)
+#                                                      y no con pkexec
 #             configurar-conexion.sh --root <archivo>  parte de root; la llama
-#                                                      este mismo script
+#                                                      este mismo script, o el
+#                                                      instalador en su fase
+#                                                      de root
+# Para el instalador (SC-107), que pide UNA sola contraseña para todo y por
+# eso reparte el trabajo en tres llamadas, como usuario común:
+#             --controlar              salida 0 si el archivo abre una sesión;
+#                                      no escribe nada
+#             --clave-nueva <archivo>  genera una contraseña en <archivo>, 600
+#             --escribir <archivo>     escribe el archivo de conexión con la
+#                                      contraseña de <archivo>, que la fase de
+#                                      root ya puso en MySQL, y lo verifica
 # Qué hace  : decide por el estado real, como crear-cuenta-gbweb.sh (SC-81):
 #             1. Si el archivo existe y abre una sesión en la base: no toca
 #                nada.
@@ -131,6 +139,53 @@ abre_sesion() {
     -e "SELECT COUNT(*) FROM \`${DB}\`.esquema_version;" >/dev/null 2>&1
 }
 
+# ============================================
+# Función   : generar_clave
+# Propósito : Genera la contraseña de app_user: 28 letras y cifras al azar,
+#             la primera una letra, más el sufijo fijo
+# Retorna   : la contraseña por la salida estándar; 1 si no salió de 32
+# ============================================
+generar_clave() {
+  local alea letras clave
+
+  # head LEE UNA CANTIDAD FIJA Y tr LA FILTRA ENTERA: CON «tr </dev/urandom |
+  # head» tr MUERE POR SIGPIPE, Y BAJO pipefail ESO ES UN ERROR (MEDIDO:
+  # SALIDA 141)
+  alea="$(head -c 4096 /dev/urandom | tr -dc 'A-Za-z0-9')"
+  letras="${alea//[0-9]/}"
+  clave="${letras:0:1}${alea:0:27}${SUFIJO_CLAVE}"
+  [ "${#clave}" -eq 32 ] || return 1
+  printf '%s' "$clave"
+}
+
+# ============================================
+# Función   : escribir_conf
+# Propósito : Escribe el archivo de conexión entero, con permisos 600, y lo
+#             mueve a su lugar: si se corta a la mitad, el anterior no queda
+#             a medio escribir
+# Parámetros: $1 — la contraseña
+# Retorna   : 0 escrito
+# ============================================
+escribir_conf() {
+  local clave="$1" nuevo
+
+  mkdir -p "$DIR_CONF"
+  nuevo="$(umask 077 && mktemp "${DIR_CONF}/conexion.conf.XXXXXX")"
+  {
+    echo "# gbpublisher: credencial de la base de datos (configurar-conexion.sh)."
+    echo "# Archivo de opciones de MySQL. No lo comparta: tiene la contraseña."
+    echo "[client]"
+    echo "user=${DB_USER}"
+    echo "password=${clave}"
+    echo "host=localhost"
+    echo
+    echo "[mysql]"
+    echo "database=${DB}"
+  } > "$nuevo"
+  chmod 600 "$nuevo"
+  mv -f "$nuevo" "$CONF"
+}
+
 # --- 1. COMO USUARIO COMÚN, NO COMO ROOT ---
 # EL ARCHIVO ES DEL USUARIO QUE VA A USAR gbpublisher Y VA A SU CARPETA
 if [ "$(id -u)" -eq 0 ]; then
@@ -138,6 +193,42 @@ if [ "$(id -u)" -eq 0 ]; then
   error "Ejecute:  bash configurar-conexion.sh"
   exit 1
 fi
+
+DIR_CONF="${HOME}/.gbpublisher"
+CONF="${DIR_CONF}/conexion.conf"
+
+# --- 1 BIS. LOS MODOS DEL INSTALADOR (SC-107) ---
+# EL INSTALADOR NO PUEDE USAR EL FLUJO NORMAL: ESTE PIDE SU PROPIA VENTANA DE
+# pkexec, Y EL INSTALADOR PIDE UNA SOLA. LA CONTRASEÑA SE GENERA ACÁ, LA PONE
+# EN MySQL LA FASE DE root DEL INSTALADOR CON --root, Y EL ARCHIVO SE ESCRIBE
+# ACÁ: EL FORMATO Y LA GENERACIÓN SIGUEN VIVIENDO EN UN SOLO LUGAR
+case "${1:-}" in
+  --controlar)
+    # SIN CLIENTE mysql (MÁQUINA NUEVA) NO HAY SESIÓN POSIBLE
+    command -v mysql >/dev/null 2>&1 || exit 1
+    [ -f "$CONF" ] && abre_sesion "$CONF"
+    exit $?
+    ;;
+  --clave-nueva)
+    [ -n "${2:-}" ] || { error "Uso: --clave-nueva <archivo>"; exit 1; }
+    CLAVE="$(generar_clave)" || { error "No se pudo generar la contraseña."; exit 1; }
+    ( umask 077 && printf '%s\n' "$CLAVE" > "$2" ) || { error "No se pudo escribir ${2}."; exit 1; }
+    exit 0
+    ;;
+  --escribir)
+    [ -n "${2:-}" ] || { error "Uso: --escribir <archivo>"; exit 1; }
+    CLAVE="$(head -n 1 "$2" 2>/dev/null)"
+    [ "${#CLAVE}" -eq 32 ] || { error "No se pudo leer la contraseña de ${2}."; exit 1; }
+    escribir_conf "$CLAVE"
+    ok "Archivo de conexión escrito: ${CONF} (solo lo lee su usuario)."
+    if abre_sesion "$CONF"; then
+      ok "La conexión con la base funciona."
+      exit 0
+    fi
+    error "El archivo quedó escrito, pero no abre una sesión en la base."
+    exit 1
+    ;;
+esac
 
 ELEVAR="pkexec"
 [ "${1:-}" = "--con-sudo" ] && ELEVAR="sudo"
@@ -153,8 +244,6 @@ for comando in mysql "$ELEVAR" tr head mktemp; do
   fi
 done
 
-DIR_CONF="${HOME}/.gbpublisher"
-CONF="${DIR_CONF}/conexion.conf"
 SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
 
 echo
@@ -175,13 +264,7 @@ else
 fi
 
 # --- 3. CONTRASEÑA NUEVA ---
-# 28 LETRAS Y CIFRAS, LA PRIMERA UNA LETRA, MÁS EL SUFIJO FIJO. head LEE UNA
-# CANTIDAD FIJA Y tr LA FILTRA ENTERA: CON «tr </dev/urandom | head» tr MUERE
-# POR SIGPIPE, Y BAJO pipefail ESO ES UN ERROR (MEDIDO: SALIDA 141)
-ALEA="$(head -c 4096 /dev/urandom | tr -dc 'A-Za-z0-9')"
-LETRAS="${ALEA//[0-9]/}"
-CLAVE="${LETRAS:0:1}${ALEA:0:27}${SUFIJO_CLAVE}"
-if [ "${#CLAVE}" -ne 32 ]; then
+if ! CLAVE="$(generar_clave)"; then
   error "No se pudo generar la contraseña."
   exit 1
 fi
@@ -205,29 +288,14 @@ HAY_RED=0
 case "$CODIGO" in
   0)   ;;
   4)   HAY_RED=1 ;;
-  2)   error "Primero hay que instalar la base de datos (instalar-gbpublisher.sh)."; exit 1 ;;
+  2)   error "La base de datos no está instalada: ejecute el instalador (LEER-INSTALADOR.md)."; exit 1 ;;
   126) error "Se cerró la ventana de la contraseña: no se cambió nada."; exit 1 ;;
   127) error "No se obtuvo permiso de administrador: no se cambió nada."; exit 1 ;;
   *)   error "No se pudo terminar (código ${CODIGO}). El motivo está más arriba."; exit 1 ;;
 esac
 
-# --- 5. EL ARCHIVO: ENTERO, CON PERMISOS 600, Y MOVIDO A SU LUGAR ---
-# SI SE CORTA A LA MITAD, EL ARCHIVO ANTERIOR NO QUEDA A MEDIO ESCRIBIR
-mkdir -p "$DIR_CONF"
-NUEVO="$(umask 077 && mktemp "${DIR_CONF}/conexion.conf.XXXXXX")"
-{
-  echo "# gbpublisher: credencial de la base de datos (configurar-conexion.sh)."
-  echo "# Archivo de opciones de MySQL. No lo comparta: tiene la contraseña."
-  echo "[client]"
-  echo "user=${DB_USER}"
-  echo "password=${CLAVE}"
-  echo "host=localhost"
-  echo
-  echo "[mysql]"
-  echo "database=${DB}"
-} > "$NUEVO"
-chmod 600 "$NUEVO"
-mv -f "$NUEVO" "$CONF"
+# --- 5. EL ARCHIVO ---
+escribir_conf "$CLAVE"
 ok "Archivo de conexión escrito: ${CONF} (solo lo lee su usuario)."
 
 # --- 6. VERIFICACIÓN CON EL ARCHIVO ---

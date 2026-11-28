@@ -24,30 +24,25 @@ CRediT, idiomas, países, licencias y tipos de declaración. No contiene
 datos editoriales de nadie: ni proyectos, ni artículos, ni usuarios, ni
 credenciales.
 
-Se instala con el asistente:
+Lo instala el instalador de gbpublisher, `instalador.sh` (ver
+[LEER-INSTALADOR.md](LEER-INSTALADOR.md)). Si la base no existe, la crea
+desde el baseline y verifica la carga con los números que el propio
+baseline declara en su encabezado (las tablas y las filas de cada tabla
+semilla, sección 3). Después aplica las actualizaciones que siguen al
+baseline, crea la cuenta de la aplicación y escribe el archivo de conexión.
+Si la base ya existe, nunca la borra: la conserva y la lleva al esquema de
+la versión.
 
-```bash
-./instalar-gbpublisher.sh
-```
-
-El asistente busca el baseline en su misma carpeta, verifica que sea
-válido, avisa que la operación es destructiva, pide confirmación explícita,
-importa el archivo, crea el usuario de la aplicación y comprueba el
-resultado antes de dar por buena la instalación.
-
-Para una instalación cliente/servidor pregunta el rango de red de las
-máquinas cliente, o se le puede indicar directamente:
-
-```bash
-./instalar-gbpublisher.sh -r '192.168.128.%'
-```
+El instalador prepara una base **local**, que solo acepta conexiones desde
+la propia computadora. Una instalación con servidor, en la que varias
+computadoras usan una misma base, se documentará aparte; las secciones 2
+(identidad por host) y 6 reúnen lo que esa documentación va a necesitar.
 
 **Desde la 2.0.0 el baseline es el esquema actual.** Incorpora las
 actualizaciones 1.1.0 a 2.0.0: una instalación nueva no aplica ninguna de
 ellas. El baseline 1.0.0 queda en el repositorio como punto de partida de
 esa cadena, que es la que siguen las instalaciones anteriores (ver la
-sección 5). Está previsto que un único instalador (`instalador.sh`) haga
-todo esto; mientras tanto, la guía paso a paso está en [LEEME.md](LEEME.md).
+sección 5).
 
 ---
 
@@ -80,7 +75,15 @@ del usuario) y pide la contraseña de administrador con una ventana gráfica
 solo para cambiar la clave en MySQL. Decide por el estado real: si el archivo
 existe y abre una sesión, no toca nada; si no, genera una clave nueva, la
 pone en todas las cuentas `app_user` del servidor y escribe el archivo.
-`instalar-gbpublisher.sh` lo llama al final.
+El instalador lo usa en tres llamadas (`--controlar`, `--clave-nueva` y
+`--escribir`, como usuario, y `--root` en su fase de administrador), para
+pedir una sola contraseña en toda la instalación.
+
+Los permisos de `app_user` son `SELECT, INSERT, UPDATE, DELETE` y
+`SHOW VIEW` sobre la base: los que usa la aplicación (medido en Mint) más
+el que necesita el respaldo diario para copiar las vistas. No tiene
+`TRIGGER`, a propósito (sección 5). Las instalaciones anteriores al
+instalador pueden tener `ALL PRIVILEGES`.
 
 **Los usuarios de gbpublisher.** Viven en la tabla `usuarios` de la base.
 Se dan de alta desde el formulario de administración de la aplicación. **No
@@ -110,10 +113,10 @@ y clave contra la tabla `usuarios`.
 distintas**, no un permiso que se extiende. Habilitar el acceso desde la red
 no es ampliar un permiso existente: es crear otra cuenta.
 
-Por eso el asistente crea las dos cuando se le indica un rango de red, y
-por eso conserva siempre la de `localhost` aunque la instalación sea
-servidor: las conexiones desde la propia máquina del servidor usan socket
-Unix y necesitan esa cuenta.
+Por eso una instalación con servidor necesita las dos cuentas: la de la red
+y la de `localhost`, porque las conexiones desde la propia máquina del
+servidor usan socket Unix y necesitan esa cuenta. El instalador crea solo
+la de `localhost`.
 
 ---
 
@@ -174,6 +177,14 @@ Además verifica lo que produjo: cuenta tablas, comprueba que ninguna tabla
 de trabajo traiga datos, y con la opción `-v` carga el archivo en una base
 temporal para confirmar que se restaura sin errores. Un baseline que no
 pasa esas verificaciones no debería distribuirse.
+
+**Escribe en el encabezado los números de verificación.** Una línea
+`-- Verificación: tablas=N` y una `-- Verificación: semilla <tabla>=<filas>`
+por tabla semilla, contadas en el propio volcado. El instalador verifica la
+carga contra esos números, y `publicar.sh` no publica un baseline sin
+ellos. Así los números viajan con el archivo y nadie los copia a mano en
+cada rebaseo. El baseline 2.0.0, anterior a esta regla, los recibió a mano
+el 27/11/2026, contados en el mismo archivo.
 
 ---
 
@@ -317,7 +328,7 @@ Las propiedades que todo script de actualización debe tener:
 
 | Caso | Paso | Script |
 |---|---|---|
-| Instalación nueva | Instalación | `gbpublisher-baseline-2.0.0.sql` con `instalar-gbpublisher.sh`, y después `actualizar-esquema-2.1.0.sh` … `actualizar-esquema-2.5.0.sh`, en orden |
+| Instalación nueva | Instalación | El instalador: `gbpublisher-baseline-2.0.0.sql`, y después `actualizar-esquema-2.1.0.sh` … `actualizar-esquema-2.5.0.sh`, en orden |
 | Instalación anterior a la 2.0.0 | Actualizaciones | `actualizar-esquema-1.1.0.sh` … `actualizar-esquema-1.34.0.sh` y `actualizar-esquema-2.0.0.sh` … `actualizar-esquema-2.5.0.sh`, en orden, desde la última que tenga registrada |
 
 Para saber en qué punto está una base:
@@ -406,17 +417,18 @@ la instalación se vuelva un procedimiento largo. El primer rebase es el
 
 ## 6. Lo que no resuelve la base de datos
 
-Dos cosas dependen del servidor y ningún script de la base puede
-arreglarlas. Conviene conocerlas porque son la causa más frecuente de que
-una instalación cliente/servidor no funcione.
+Esta sección es para una instalación con servidor, que se documentará
+aparte: el instalador prepara una base local. Dos cosas dependen del
+servidor y ningún script de la base puede arreglarlas. Conviene conocerlas
+porque son la causa más frecuente de que una instalación cliente/servidor no
+funcione.
 
 **El servidor tiene que escuchar en la red.** MySQL viene configurado para aceptar solo conexiones locales
 (`bind-address = 127.0.0.1`). Con esa configuración, ninguna otra máquina
 puede conectarse, sin importar qué permisos tenga `app_user`. El síntoma es
 un error de conexión rechazada (código 111): la conexión ni siquiera llega
 al servidor de base de datos. Se corrige en la configuración de MySQL
-(`bind-address = 0.0.0.0`) y reiniciando el servicio. El asistente de
-instalación avisa cuando detecta esta situación.
+(`bind-address = 0.0.0.0`) y reiniciando el servicio.
 
 **El puerto no debe quedar expuesto fuera del perímetro.** Hasta la
 versión que introdujo el archivo de conexión, la clave de `app_user` era la
@@ -424,8 +436,8 @@ misma en todas las instalaciones y estaba publicada en el código. Desde
 entonces cada instalación tiene la suya, pero el perímetro de red sigue
 siendo la primera barrera: red interna de la institución, o VPN. Si el
 servidor queda alcanzable desde una red más amplia, corresponde filtrar el
-puerto 3306 con el cortafuegos. Por la misma razón, el asistente pide un
-rango de red concreto en lugar de habilitar cualquier origen.
+puerto 3306 con el cortafuegos. Por la misma razón, la cuenta de red de
+`app_user` se crea para un rango concreto, no para cualquier origen.
 
 **Cada máquina cliente necesita su archivo de conexión.** En una
 instalación cliente/servidor, `configurar-conexion.sh` se corre en el
@@ -442,22 +454,26 @@ de conectarse.
 
 | Archivo | Para quién | Qué hace |
 |---|---|---|
-| `gbpublisher-baseline-X.Y.Z.sql` | Quien instala | Base inicial, punto de partida de la cadena |
-| `instalar-gbpublisher.sh` | Quien instala | Asistente de instalación limpia |
-| `configurar-conexion.sh` | Quien instala o actualiza | Clave de `app_user` y archivo de conexión del usuario (sin sudo) |
-| `actualizar-esquema-X.Y.Z.sh` | Quien instala o actualiza | Lleva la base a la versión siguiente |
+| `instalador.sh` | Quien instala | Instala, actualiza o repara gbpublisher con su base local |
+| `gbpublisher-baseline-X.Y.Z.sql` | El instalador | Base inicial, punto de partida de la cadena |
+| `configurar-conexion.sh` | El instalador, o quien da soporte | Clave de `app_user` y archivo de conexión del usuario (sin sudo) |
+| `actualizar-esquema-X.Y.Z.sh` | El instalador, o quien actualiza a mano | Lleva la base a la versión siguiente |
 | `generar-baseline.sh` | Mantenimiento | Regenera el baseline desde una base en el nivel que declara |
+| `distribucion/publicar.sh` | Mantenimiento | Publica una versión: el `.deb`, el paquete de la base y el instalador |
 
-El baseline, el asistente y `configurar-conexion.sh` viajan juntos: el
-asistente los busca en su misma carpeta. El generador es herramienta de mantenimiento y no se
-distribuye a las instalaciones.
+El baseline, los scripts de esquema y `configurar-conexion.sh` viajan
+juntos en el paquete de la base de cada versión
+(`gbpublisher-base-X.Y.Z.tar.gz`), que el instalador descarga y verifica.
+El generador y `publicar.sh` son herramientas de mantenimiento y no se
+distribuyen a las instalaciones.
 
 ---
 
 ## 8. Verificación de una instalación
 
-El asistente verifica automáticamente, pero estas consultas sirven para
-comprobar el estado en cualquier momento. Los números corresponden a una
+El instalador verifica la carga del baseline con los números de su
+encabezado, pero estas consultas sirven para comprobar el estado en
+cualquier momento. Los números corresponden a una
 base recién instalada desde el baseline 2.0.0; la aplicación controla el
 esquema actual al conectarse (`m_ConexionBD.ObtenerEsquemaEsperado`) y
 avisa de cualquier diferencia.

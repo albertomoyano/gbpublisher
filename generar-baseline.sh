@@ -40,6 +40,11 @@
 #   3. Resetea los contadores AUTO_INCREMENT residuales.
 #   4. Marca las consultas canónicas con consulta_sistema = 1.
 #   5. Declara el nivel de esquema en esquema_version.
+#   6. Escribe en el encabezado los números con los que el instalador
+#      verifica la carga («-- Verificación: tablas=N» y una línea
+#      «-- Verificación: semilla <tabla>=<filas>» por tabla semilla). Se
+#      cuentan en el propio volcado: viajan con el archivo y nadie los copia
+#      a mano en cada rebaseo (SC-107).
 #
 # Requisitos: mysqldump y mysql (MySQL 8; el proyecto no usa MariaDB).
 #             El usuario necesita SELECT sobre la base, más SHOW VIEW y
@@ -238,6 +243,15 @@ echo "[..] Ensamblando $SALIDA"
 
 FECHA="$(date '+%Y-%m-%d %H:%M:%S')"
 
+# LOS NÚMEROS DE VERIFICACIÓN, CONTADOS EN EL VOLCADO: LAS TABLAS DEL ORIGEN
+# MÁS esquema_version, QUE ESTE SCRIPT AGREGA; LAS FILAS DE CADA SEMILLA, UN
+# INSERT POR FILA (--skip-extended-insert)
+VERIF_TABLAS=$(( $(grep -c "^CREATE TABLE" "$TMP_DIR/estructura.sql") + 1 ))
+VERIF_SEMILLAS=""
+for t in "${TABLAS_SEMILLA[@]}"; do
+  VERIF_SEMILLAS+="-- Verificación: semilla ${t}=$(grep -c "^INSERT INTO \`${t}\`" "$TMP_DIR/semilla.sql")"$'\n'
+done
+
 {
   cat <<CABECERA
 -- ==============================================================================
@@ -258,7 +272,10 @@ FECHA="$(date '+%Y-%m-%d %H:%M:%S')"
 -- El nivel de esquema queda declarado en la tabla esquema_version. Los
 -- parches posteriores consultan esa tabla para decidir si corresponde
 -- aplicarse.
--- ==============================================================================
+--
+-- Números con los que el instalador verifica la carga:
+-- Verificación: tablas=$VERIF_TABLAS
+${VERIF_SEMILLAS}-- ==============================================================================
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -391,6 +408,9 @@ comprobar "sin cláusulas DEFINER" \
 comprobar "sin contadores AUTO_INCREMENT residuales" \
           "$(grep -q 'AUTO_INCREMENT=' "$SALIDA" && echo 0 || echo 1)"
 
+comprobar "declara sus números de verificación" \
+          "$(grep -q "^-- Verificación: tablas=$n_tablas\$" "$SALIDA" && echo 1 || echo 0)"
+
 comprobar "declara el nivel baseline-$VERSION" \
           "$(grep -q "baseline-$VERSION" "$SALIDA" && echo 1 || echo 0)"
 
@@ -431,9 +451,16 @@ if [ "$VERIFICAR" -eq 1 ]; then
       SELECT CONCAT('     [ok] ', COUNT(*), ' tablas creadas')
         FROM information_schema.TABLES
        WHERE TABLE_SCHEMA = '$TMP_DB' AND TABLE_TYPE = 'BASE TABLE';"
+    # CONTRA LOS NÚMEROS DECLARADOS: ES LA MISMA VERIFICACIÓN DEL INSTALADOR
     for t in "${TABLAS_SEMILLA[@]}"; do
       n=$("$CLI" --defaults-extra-file="$CNF" -N -B -e "SELECT COUNT(*) FROM \`$TMP_DB\`.\`$t\`;")
-      echo "     [ok] $t: $n filas"
+      declarado=$(sed -n "s/^-- Verificación: semilla ${t}=\([0-9]*\)\$/\1/p" "$SALIDA")
+      if [ "$n" = "$declarado" ]; then
+        echo "     [ok] $t: $n filas"
+      else
+        echo "     [!] $t: $n filas, el encabezado declara $declarado"
+        fallos=$((fallos + 1))
+      fi
     done
   else
     echo "     [!] la carga falló:"

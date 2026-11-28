@@ -16,6 +16,23 @@
 -- El nivel de esquema queda declarado en la tabla esquema_version. Los
 -- parches posteriores consultan esa tabla para decidir si corresponde
 -- aplicarse.
+--
+-- Números con los que el instalador verifica la carga. Agregados a mano el
+-- 27/11/2026, contados en este mismo archivo (SC-107); desde ahí los escribe
+-- generar-baseline.sh:
+-- Verificación: tablas=68
+-- Verificación: semilla manual_ayudas=36
+-- Verificación: semilla consultas=82
+-- Verificación: semilla cmb_biblatex=120
+-- Verificación: semilla bibtex_campo_catalogo=105
+-- Verificación: semilla formatos_pdf=45
+-- Verificación: semilla credit_roles=14
+-- Verificación: semilla credit_rol_nombre=28
+-- Verificación: semilla idiomas=386
+-- Verificación: semilla pais=249
+-- Verificación: semilla licencias=19
+-- Verificación: semilla licencia_texto=6
+-- Verificación: semilla tipo_declaracion=3
 -- ==============================================================================
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
